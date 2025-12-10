@@ -965,45 +965,109 @@ class NoiseApp:
 
 
 # -------------------- Plotting helpers --------------------
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 
-def plot_milidecade_statistics(instrument_group, pBands=[5, 25, 50, 75, 95]):
+def _extract_milidecade_psd(instrument_group):
+    """
+    Extract PSD and frequency for a single instrument_group, trimming
+    to the valid time range based on DateTime.
+    """
     # Read time stamps and find the usable data range
     time_stamps = instrument_group['DateTime'][:].astype(str)
-    max_data_len = min(
-        np.argmax(time_stamps == "0000-00-00 00:00:00") if "0000-00-00 00:00:00" in time_stamps else len(time_stamps),
-        len(time_stamps)
-    )
+
+    if "0000-00-00 00:00:00" in time_stamps:
+        cutoff_idx = np.argmax(time_stamps == "0000-00-00 00:00:00")
+        max_data_len = min(cutoff_idx, len(time_stamps))
+    else:
+        max_data_len = len(time_stamps)
 
     # Read frequency and data
-    ff = instrument_group['hybridDecFreqHz'][:, 1]
+    ff = instrument_group['hybridDecFreqHz'][:, 1]    # (F,)
+    PSD = instrument_group['hybridMiliDecLevels'][0:max_data_len, :]  # (T, F)
 
-    # Compute stats
-    PSD = instrument_group['hybridMiliDecLevels'][0:max_data_len, :]
-    RMSlevel = 10 * np.log10(np.mean(10 ** (PSD / 10), axis=0))  # RMS level
+    return PSD, ff
 
-    # Percentiles
-    p = np.percentile(PSD, pBands, axis=0)
+def plot_milidecade_statistics(instrument_group_or_list, pBands=[5, 25, 50, 75, 95]):
+    """
+    Plot milidecade statistics (SPD, percentiles, RMS) for one or more days.
+
+    Parameters
+    ----------
+    instrument_group_or_list : h5py.Group or list of h5py.Group
+        - Single HDF5 group (one file/day), OR
+        - List/tuple of groups for multiple files/days.
+    pBands : list of int
+        Percentiles to plot.
+    """
+    # Normalize input to a list of groups
+    if isinstance(instrument_group_or_list, (list, tuple)):
+        groups = instrument_group_or_list
+    else:
+        groups = [instrument_group_or_list]
+
+    if len(groups) == 0:
+        raise ValueError("No instrument groups provided to plot_milidecade_statistics.")
+
+    # --- 1. Collect PSDs and check frequency consistency across groups ---
+    PSD_list = []
+    ff_ref = None
+
+    for g in groups:
+        PSD_g, ff_g = _extract_milidecade_psd(g)
+        PSD_list.append(PSD_g)
+
+        if ff_ref is None:
+            ff_ref = ff_g
+        else:
+            # sanity check: all groups must have same freq bins
+            if not np.allclose(ff_ref, ff_g):
+                raise ValueError("Frequency vectors differ between instrument groups; "
+                                 "cannot safely concatenate PSDs.")
+
+    # Concatenate along time axis: (T_total, F)
+    PSD_all = np.vstack(PSD_list)
+    ff = ff_ref
+
+    # --- 2. Compute stats on concatenated PSD ---
+    # RMS level (across time)
+    RMSlevel = 10 * np.log10(np.mean(10 ** (PSD_all / 10), axis=0))
+
+    # Percentiles across time
+    p = np.percentile(PSD_all, pBands, axis=0)
 
     # Min/Max dB levels
-    mindB = np.floor(np.min(PSD) / 10) * 10
-    maxdB = np.ceil(np.max(PSD) / 10) * 10
+    mindB = np.floor(np.min(PSD_all) / 10) * 10
+    maxdB = np.ceil(np.max(PSD_all) / 10) * 10
 
-    # Empirical Probability Density (SPD)
+    # --- 3. Empirical Probability Density (SPD) ---
     hind = 0.1
     dbvec = np.arange(mindB, maxdB + hind, hind)
-    M = PSD.shape[0] - 1
+    M = PSD_all.shape[0] - 1  # number of "intervals" in time
 
-    d = np.zeros((len(dbvec) - 1, PSD.shape[1]))
-    for i in range(PSD.shape[1]):
-        d[:, i] = np.histogram(PSD[:, i], bins=dbvec, density=True)[0]
+    d = np.zeros((len(dbvec) - 1, PSD_all.shape[1]))
+    for i in range(PSD_all.shape[1]):
+        d[:, i] = np.histogram(PSD_all[:, i], bins=dbvec, density=False)[0]
+
+    # Scale to density per dB per "time"
     d /= (hind * M)
     d[d == 0] = np.nan
 
-    # Prepare meshgrid for plotting
+    # --- 4. Plot ---
     X, Y = np.meshgrid(ff + 1, dbvec[:-1])
     fig, ax0 = plt.subplots(1, 1, figsize=(8, 6))
 
-    c = ax0.pcolor(X, Y, d, shading='auto')
+#    c = ax0.pcolor(X, Y, d, shading='auto')
+    c = ax0.pcolor(
+        X, Y, d,
+        shading='auto',
+        norm=LogNorm(vmin=np.nanmax(d) * 1e-4, vmax=np.nanmax(d))
+    )
+
     ax0.set_xscale('log')
     plt.colorbar(c, ax=ax0, label='Empirical Probability Density')
 
@@ -1011,164 +1075,218 @@ def plot_milidecade_statistics(instrument_group, pBands=[5, 25, 50, 75, 95]):
     ax0.set_ylabel('PSD (dB re 1 µPa²/Hz)')
     ax0.set_title('Empirical Probability Density (SPD)')
 
+    # Percentile curves
     cvals = [
         [0, 0, 0],
         [0.1, 0.1, 0.1],
         [0.2, 0.2, 0.2],
         [0.3, 0.3, 0.3],
-        [0.4, 0.4, 0.4]]
+        [0.4, 0.4, 0.4],
+    ]
     for i, p_band in enumerate(pBands):
         ax0.semilogx(ff + 1, p[i, :], label=f'L{p_band}', color=cvals[i])
 
+    # RMS curve
     ax0.semilogx(ff + 1, RMSlevel, label='RMS Level', color='m', linewidth=2)
 
     ax0.set_xlim(ff.min(), ff.max())
     ax0.set_ylim(Y.min(), Y.max())
     ax0.legend(loc='upper right', fontsize=10)
+    plt.tight_layout()
     plt.show()
+
     return plt
 
-
-def plot_ltsa2(instrument_group, averaging_period='5min'):
+def _extract_ltsa_data(instrument_group):
     """
-    Create a Long-Term Spectral Average (LTSA) plot from an HDF5 instrument group.
+    Extract DateTime, PSD (hybridMiliDecLevels) and frequency vector
+    from a single instrument_group, trimming any trailing '0000-00-00 00:00:00'.
+    Returns:
+        times : pandas.DatetimeIndex
+        PSD   : 2D array (T, F)
+        freq  : 1D array (F,)
     """
-    # Load frequency and time data
-    frequency_data = instrument_group['hybridDecFreqHz'][:]  # [low, center, high]
-    time_stamps = instrument_group['DateTime'][:].astype(str)
+    # Raw timestamps as strings
+    raw_ts = instrument_group['DateTime'][:].astype(str)
 
-    # Convert timestamps to datetime objects
-    time_stamps = pd.to_datetime(time_stamps, errors='coerce')
-    time_stamps = time_stamps.dropna()
+    # Trim at first sentinel, if present
+    sentinel = "0000-00-00 00:00:00"
+    sentinel_idx = np.where(raw_ts == sentinel)[0]
+    if len(sentinel_idx) > 0:
+        raw_ts = raw_ts[:sentinel_idx[0]]
 
-    # Find valid data range
-    max_data_len = np.where(time_stamps == "0000-00-00 00:00:00")[0]
-    if len(max_data_len) > 0:
-        time_stamps = time_stamps[:max_data_len[0]]
+    # Convert to datetime and drop NaT
+    times = pd.to_datetime(raw_ts, errors='coerce')
+    valid_mask = ~times.isna()
+    times = times[valid_mask]
 
-    # Load hybrid milli-decade levels
-    data = instrument_group['hybridMiliDecLevels'][0:len(time_stamps), :]
+    # PSD and frequency
+    PSD_full = instrument_group['hybridMiliDecLevels'][:len(raw_ts), :]
+    PSD = PSD_full[valid_mask, :]
+    freq = instrument_group['hybridDecFreqHz'][:, 1]
 
-    # Define time chunks for averaging
-    median_spacing = pd.to_timedelta(averaging_period)
-    time_chunks = pd.date_range(start=time_stamps[0].floor(freq=averaging_period),
-                                end=time_stamps[-1].ceil(freq=averaging_period),
-                                freq=median_spacing)
-    timeChucnkskeep = np.zeros(len(time_chunks))
+    return times, PSD, freq
 
-    # Frequency edges from center frequencies
-    freq_edges = frequency_data[:, 1] * 10 ** (-0.05)
+def plot_ltsa(instrument_group_or_list,
+              averaging_period='5min',
+              titleText="",
+              freq_scaled=True,
+              log_freq=False):
+    """
+    LTSA plot over one or more instrument groups (e.g., multiple days).
 
-    # Initialize an empty array to hold median values
-    nlVals = np.zeros((len(frequency_data[:, 0]), len(time_chunks) - 1)) * np.nan
+    Parameters
+    ----------
+    instrument_group_or_list : h5py.Group or list/tuple of h5py.Group
+        One group for a single file/day or a list of groups for multiple files.
+    averaging_period : str
+        Pandas offset alias for time-averaging (e.g., '5min', '1min', '1H').
+    titleText : str
+        Figure title (optional).
+    freq_scaled : bool
+        If True, use actual frequency values as the y-coordinate (pcolormesh).
+        If False, use an index-based y-axis with frequency labels only.
+    log_freq : bool
+        If True and freq_scaled is True, use a log scale for the frequency axis.
+    """
+    # Normalize input to list
+    if isinstance(instrument_group_or_list, (list, tuple)):
+        groups = instrument_group_or_list
+    else:
+        groups = [instrument_group_or_list]
 
-    # Compute median (actually mean of linear) values for each time chunk
-    for i in range(len(time_chunks) - 1):
-        chunk_idx = np.where(
-            (time_stamps >= time_chunks[i]) & (time_stamps < time_chunks[i + 1]))[0]
-        data_chunk = data[chunk_idx, :]
-        if data_chunk.size > 0:
-            timeChucnkskeep[i] = 1
-            med_vals = 10 * np.log10(np.nanmean(10 ** (data_chunk / 10), axis=0))
-            nlVals[:, i] = np.round(med_vals, 2)
+    if not groups:
+        raise ValueError("No instrument groups provided to plot_ltsa.")
 
-    # Drop rows with NA values
-    nlValsTrimmed = nlVals[:, np.where(timeChucnkskeep)[0]]
-    time_chunksTrimmed = time_chunks[np.where(timeChucnkskeep)]
+    # ---- 1. Collect and concatenate data across all groups ----
+    time_list = []
+    PSD_list = []
+    freq_ref = None
 
+    for g in groups:
+        times_g, PSD_g, freq_g = _extract_ltsa_data(g)
+        if len(times_g) == 0:
+            continue
+
+        time_list.append(times_g)
+        PSD_list.append(PSD_g)
+
+        if freq_ref is None:
+            freq_ref = freq_g
+        else:
+            if not np.allclose(freq_ref, freq_g):
+                raise ValueError("Frequency vectors differ between instrument groups; "
+                                 "cannot safely combine LTSA.")
+
+    if not time_list:
+        raise ValueError("No valid data found in supplied groups.")
+
+    # Concatenate and sort by time
+    times_all = pd.DatetimeIndex(np.concatenate([t.values for t in time_list]))
+    PSD_all = np.vstack(PSD_list)
+
+    order = np.argsort(times_all.values)
+    times_all = times_all[order]
+    PSD_all = PSD_all[order, :]
+
+    freq = freq_ref
+    n_freq = PSD_all.shape[1]
+
+    # ---- 2. Build averaging bins ----
+    start = times_all[0].floor(freq=averaging_period)
+    end = times_all[-1].ceil(freq=averaging_period)
+    time_edges = pd.date_range(start=start, end=end, freq=averaging_period)
+
+    if len(time_edges) < 2:
+        raise ValueError("Not enough data to form LTSA bins with "
+                         f"averaging_period='{averaging_period}'.")
+
+    # NT x NF internal grid
+    n_bins = len(time_edges) - 1
+    nlVals = np.full((n_freq, n_bins), np.nan)
+
+    for i in range(n_bins):
+        t0, t1 = time_edges[i], time_edges[i + 1]
+        mask = (times_all >= t0) & (times_all < t1)
+        if not mask.any():
+            continue
+
+        data_chunk = PSD_all[mask, :]  # (n_chunk, n_freq)
+        # mean in linear space, then back to dB
+        med_vals = 10 * np.log10(np.mean(10 ** (data_chunk / 10.0), axis=0))
+        nlVals[:, i] = med_vals
+
+    # Drop columns with all NaNs
+    valid_cols = ~np.isnan(nlVals).all(axis=0)
+    nlVals = nlVals[:, valid_cols]
+    time_edges = time_edges[:-1][valid_cols]
+
+    # Bin centers for plotting
+    dt = (time_edges[1] - time_edges[0]) if len(time_edges) > 1 else pd.Timedelta(0)
+    time_centers = time_edges + dt / 2
+
+    # ---- 3. Plot ----
     fig, ax = plt.subplots(figsize=(10, 6))
-    img = ax.imshow(nlValsTrimmed, aspect='auto', cmap="cubehelix",
-                    origin='lower',
-                    extent=[time_chunksTrimmed[0],
-                            time_chunksTrimmed[-1],
-                            frequency_data[0, 1],
-                            frequency_data[-1, 1]])
-    cbar = fig.colorbar(img, ax=ax)
-    cbar.set_label(r'RMS SPL (dB re 1 $\mu$Pa)', fontsize=8)
 
-    ax.set_xlabel('Time')
-    ax.set_ylabel('Frequency (Hz)')
-    ax.set_title('Long-Term Spectral Average (LTSA)')
-    ax.xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%Y-%m-%d %H:%M'))
-    plt.xticks(rotation=45)
+    if freq_scaled:
 
-    ax.set_yscale('log')
-    ax.yaxis.set_major_locator(ticker.LogLocator(base=10.0, subs='auto', numticks=10))
-    ax.set_yticks(frequency_data[:, 1])  # Log-spaced ticks
-    ax.set_yticklabels([f"{int(f):,}" for f in frequency_data[:, 1]])
+        # Use real frequency as the y coordinate
+        t_num = mdates.date2num(time_centers)
+        T_grid, F_grid = np.meshgrid(t_num, freq)
 
-    # Alternate pcolormesh view
-    pcm = ax.pcolormesh(time_chunksTrimmed, freq_edges, nlValsTrimmed,
-                        shading='auto', cmap="cubehelix")
+        pcm = ax.pcolormesh(T_grid, F_grid, nlVals,
+                            shading='auto', cmap='cubehelix')
+
+        ax.set_ylabel("Frequency (Hz)")
+        ax.set_xlabel("Time")
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d\n%H:%M'))
+
+        # ----- Log-scaled frequency axis (base-10) -----
+        if log_freq:
+            # Matplotlib requires strictly positive values
+            freq_pos = freq[freq > 0]
+            if freq_pos.size == 0:
+                raise ValueError("No positive frequency bins; cannot use log scale.")
+
+            ax.set_yscale("log")
+            ax.set_ylim(freq_pos.min(), freq.max())
+        else:
+            # Linear frequency axis
+            ax.set_ylim(freq.min(), freq.max())
+
+
+    else:
+        # Index-based y axis with frequency labels only
+        # Lowest frequency at bottom by using origin='lower'
+        pcm = ax.imshow(nlVals,
+                        aspect='auto',
+                        origin='lower',
+                        cmap='cubehelix')
+
+        ax.set_xlabel("Time bin index")
+        ax.set_ylabel("Frequency (Hz)")
+
+        # Map indices to frequency labels
+        n_rows = nlVals.shape[0]
+        yticks = np.linspace(0, n_rows - 1, num=6)
+        yfreqs = np.linspace(freq.min(), freq.max(), num=6)
+        ax.set_yticks(yticks)
+        ax.set_yticklabels(np.round(yfreqs).astype(int))
+
+        # For index-based mode, you might want simple integer ticks on x
+        ax.set_xticks(np.linspace(0, nlVals.shape[1] - 1, num=10))
+
     cbar = fig.colorbar(pcm, ax=ax)
-    cbar.set_label(r'RMS SPL (dB re 1 $\mu$Pa)', fontsize=8)
+    cbar.set_label(r'RMS SPL (dB re 1 $\mu$Pa)')
 
-    ax.set_yscale('log')
-    ax.set_yticks(frequency_data[:, 1])
-    ax.set_yticklabels([f"{int(f):,}" for f in frequency_data[:, 0]])
+    if titleText:
+        ax.set_title(titleText)
 
-    ax.set_xlabel('Time')
-    ax.set_ylabel('Frequency (Hz)')
-    ax.set_title('Long-Term Spectral Average (LTSA)')
-    ax.xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%Y-%m-%d %H:%M'))
-    plt.xticks(rotation=45)
+    ax.grid(False)
+    ax.tick_params(direction='out', top=False, right=False)
 
-    plt.show()
-
-
-def plot_ltsa(instrument_group, averaging_period='5min', titleText=""):
-    """
-    Alternate LTSA plot using seaborn heatmap.
-    """
-    frequency_data = instrument_group['hybridDecFreqHz'][:]
-    time_stamps = instrument_group['DateTime'][:].astype(str)
-
-    time_stamps = pd.to_datetime(time_stamps, errors='coerce')
-    time_stamps = time_stamps.dropna()
-
-    max_data_len = np.where(time_stamps == "0000-00-00 00:00:00")[0]
-    if len(max_data_len) > 0:
-        time_stamps = time_stamps[:max_data_len[0]]
-
-    data = instrument_group['hybridMiliDecLevels'][0:len(time_stamps), :]
-
-    median_spacing = pd.to_timedelta(averaging_period)
-    time_chunks = pd.date_range(start=time_stamps[0].floor(freq=averaging_period),
-                                end=time_stamps[-1].ceil(freq=averaging_period),
-                                freq=median_spacing)
-
-    X, Y = np.meshgrid(time_chunks[:-1], frequency_data[:, 1])
-
-    nlVals = np.zeros(X.shape) / 0  # NaNs
-    for i in range(len(time_chunks) - 1):
-        chunk_idx = np.where(
-            (time_stamps >= time_chunks[i]) & (time_stamps < time_chunks[i + 1]))[0]
-        data_chunk = data[chunk_idx, :]
-        if data_chunk.size > 0:
-            med_vals = 10 * np.log10(np.mean(10 ** (data_chunk / 10), axis=0))
-            nlVals[:, i] = np.round(med_vals, 2)
-
-    nlVals = nlVals[:, ~np.isnan(nlVals).all(axis=0)]
-
-    fig, ax = plt.subplots(figsize=(10, 6))
-    cbar = sns.heatmap(np.flipud(nlVals), cmap="cubehelix",
-                       ax=ax, cbar=True).collections[0].colorbar
-    cbar.set_label(r'RMS SPL (dB re 1 $\mu$Pa)', fontsize=8)
-
-    plt.show()
-
-    ax.set_ylim([70, 150])
-    ax.set_ylabel(r'RMS SPL (dB re 1 $\mu$Pa)')
-
-    ax.grid(True, which='both', linestyle='--', linewidth=0.5)
-    ax.tick_params(direction='out', top=True, right=True, labelsize=14)
-    plt.rcParams.update({'font.family': 'Arial', 'font.size': 14})
-
-    ax.set_yticks(np.linspace(0, len(frequency_data[:, 1]) - 1, num=6))
-    ax.set_yticklabels(np.flip(frequency_data[:, 1].astype(int)))
-
+    plt.tight_layout()
     return fig
-
 
 # -------------------- Script entry --------------------
 if __name__ == "__main__":
