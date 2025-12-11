@@ -1310,6 +1310,6 @@ if __name__ == "__main__":
     h5_path = r"X:\\\\Kaitlin_Palmer\\\\CalCursea_680_Noise\\\\sg680_CalCurCEAS_Sep2024_20241001.h5"
     h5_path = app.fullPath
     with h5py.File(h5_path, 'r') as hdf_file:
-        instrument_group = hdf_file['SG650']
+        instrument_group = hdf_file['SG680']
         plot_milidecade_statistics(instrument_group)
         plot_ltsa(instrument_group)
