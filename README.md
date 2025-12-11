@@ -8,7 +8,7 @@ The repository includes core modules for reading and processing acoustic recordi
 
 ____________
 ## TL;DR
-An R-based methodology for storing noise metrics in [HDF5 (Hierarchical Data Format version 5)](https://www.hdfgroup.org/solutions/hdf5/)  files. The code is modularized so a user can pick and chose which metrics to store. This repository is licensed as open source software to help the community deal with data irregularities. 
+An Python-based methodology for storing noise metrics in [HDF5 (Hierarchical Data Format version 5)](https://www.hdfgroup.org/solutions/hdf5/)  files. The code is modularized so a user can pick and chose which metrics to store. This repository is licensed as open source software to help the community deal with data irregularities. 
 
 Several pre-defined soundscape metrics that save to daily HDF5 files
 1) Hybrid-millidecade band levels
@@ -67,10 +67,9 @@ Setting Si = 0 in NoiseApp and Vpp = 2 in the PyPAM Hydrophone object is require
 
 ### Prerequisites
 
-- Python 3.x  
-- Common scientific Python packages (e.g., `numpy`, `scipy`).  
-
-A `requirements.txt` file should be added once dependencies are finalized.
+- Python 3.9 or later
+- A C compiler and HDF5 libraries (usually installed automatically via `h5py` wheels)
+- Common scientific Python packages (installed via `requirements.txt`)
 
 ### Installation
 
@@ -78,9 +77,14 @@ A `requirements.txt` file should be added once dependencies are finalized.
 git clone https://github.com/PIFSC-Protected-Species-Division/SPACIOUS-NoiseProcessing.git
 cd SPACIOUS-NoiseProcessing
 
-# Optional: set up a virtual environment
-python3 -m venv venv
-source venv/bin/activate       # Windows: venv\Scripts\activate
+# Optional: create and activate a virtual environment
+python -m venv .venv
+# Linux/macOS
+source .venv/bin/activate
+# Windows (PowerShell)
+# .venv\Scripts\Activate.ps1
 
-# Install dependencies once requirements.txt is added
+# Install dependencies and the package itself
 pip install -r requirements.txt
+pip install -e .
+
