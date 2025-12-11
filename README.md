@@ -55,6 +55,13 @@ Computational results have been validated with test data against the most recent
 - Straightforward structure for users who wish to extend methods or integrate them into larger pipelines.
 
 ---
+## Validation 
+To ensure the correctness of the hybrid-millidecade noise metrics produced by the new NoiseApp implementation, we conducted a direct comparison against PyPAM (lifewatch-pypam), which provides a widely used reference implementation of the same acoustic metric. Both tools were run on the same local WAV file, using identical FFT sizes, time-averaging windows, and band definitions. After correcting for differences in calibration conventions, the two pipelines produced spectra that agreed to within approximately ±1 dB across the entire frequency band. The code for this may be found in [PypamValidation.py](https://github.com/PIFSC-Protected-Species-Division/SPACIOUS-NoiseProcessing/blob/main/NoiseProcessing/PypamValidation.py)
+
+<img width="1128" height="696" alt="image" src="https://github.com/user-attachments/assets/253a3211-160c-4006-8797-6aee140e103c" />
+
+
+Setting Si = 0 in NoiseApp and Vpp = 2 in the PyPAM Hydrophone object is required for a fair, calibration-consistent comparison. PyPAM interprets waveform amplitudes by mapping digital samples in the range ±1 to physical volts, so full scale must correspond to ±1 V (i.e., 2 V peak-to-peak). If Vpp is left at 1, PyPAM halves the voltage and underestimates acoustic power by 6 dB. NoiseApp, by contrast, applies its sensitivity parameter Si (in dB re 1 V/µPa) directly to convert volts to µPa. Using Si = 0 ensures that both tools assume the same 1 V/µPa reference. Once these calibration conventions are aligned, the two systems produce hybrid-millidecade spectra that agree to within about 1 dB across the full band.
 
 ## Getting Started
 
