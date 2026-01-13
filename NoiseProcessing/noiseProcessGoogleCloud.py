@@ -33,6 +33,26 @@ except Exception:
     _HAS_GCS = False
 
 
+
+import h5py
+
+def print_h5_tree(h5_path, max_depth=6):
+    with h5py.File(h5_path, "r") as f:
+        def walk(name, obj):
+            depth = name.count("/")
+            if depth > max_depth:
+                return
+            if isinstance(obj, h5py.Dataset):
+                print(f"{name}  DATASET shape={obj.shape} dtype={obj.dtype}")
+            else:
+                print(f"{name}  GROUP")
+        f.visititems(walk)
+
+# example:
+# print_h5_tree(r"C:\path\to\one_file.h5")
+
+
+
 def get_band_table(fft_bin_size,
                    bin1_center_frequency=0,
                    fs=64000, base=10,
@@ -141,7 +161,9 @@ class NoiseApp:
     def __init__(self, soundFilePath, ProjName, DepName, DatabaseLoc,
                  Si=-184, clipFileSec=0, channel=0, r=0.5,
                  winname='Hann', lcut=None, hcut=None, aveSec=60,
-                 pref=1, rmDC=True, Si_units='V/µPa'):
+                 pref=1, rmDC=True, legacy_mode = None, Si_units='V/µPa',
+                 tol_method="psd_sum", # "psd_sum" (current) or "ansi_filterbank"
+                 tol_order=3):
         """
         Create long-term noise metrics from audio files (local folder or GCS).
         """
@@ -150,6 +172,13 @@ class NoiseApp:
         self.ProjName = ProjName
         self.DepName = DepName
         self.DatabaseLoc = DatabaseLoc
+        
+        # Make it act like PAMGuide by calculating the xxxx
+        self.legacy_mode = legacy_mode  # None or "pamguide"
+        
+        # Different ways of calculating third octave levels
+        self.tol_method = tol_method      # "psd_sum" (current) or "ansi_filterbank"
+        self.tol_order  = int(tol_order)  # 3 matches PAMGuide’s default approach
 
         # Calibration can be scalar dB re 1 V/µPa or a CSV path with [Hz, dB]
         self.Si = Si
@@ -196,6 +225,28 @@ class NoiseApp:
         self.temp_dir = tempfile.mkdtemp(prefix="noiseapp_")
         self._tmp_paths_to_delete = []
         self._gcs_storage_client = None  # cached Client
+        
+        
+        
+        
+       # PAMGUide helpers 
+    def _pamguide_alpha_for_window(self):
+        w = str(self.winname).lower()
+        if w in ("hann", "hanning"):
+            return 0.5
+        if w == "hamming":
+            return 0.54
+        if w == "blackman":
+            return 0.42
+        if w in ("none", "rect", "rectangular"):
+            return 1.0
+        raise ValueError(f"Unsupported window for PAMGuide legacy: {self.winname}")
+    
+    def _pamguide_B(self, window):
+        alpha = self._pamguide_alpha_for_window()
+        ww = window.astype(np.float64) / alpha
+        return (1.0 / float(self.N)) * np.sum(ww * ww)
+
 
     # ---------- GCS helpers (single, canonical set) ----------
     def _get_gcs_client(self):
@@ -315,7 +366,6 @@ class NoiseApp:
             "hcut": self.hcut,
             "overlap": self.overlap,
             "step": self.step,
-            "rmDc": self.rmDC,
             "Channel": self.channel,
             "aveSec": self.aveSec,
             "welch": self.welch,
@@ -435,7 +485,18 @@ class NoiseApp:
         compute metrics, and write into an HDF5 file per *date* encountered.
         """
         _ = self.prep_audio()
+        
+        # XXXX FIX THIS TO USER SPECIFIED WINDOW XXXX
         window = np.hanning(self.N).astype(np.float32)
+        
+
+        # Determine if PAMGUide version
+        B_pg = None
+        if self.legacy_mode == "pamguide":
+            B_pg = self._pamguide_B(window)
+            # Optional: store for metadata/debug
+            self._B_pg = float(B_pg)
+
 
         current_date_key = None   # YYYYMMDD
         data_start = 0            # row cursor within current day's HDF5
@@ -491,6 +552,12 @@ class NoiseApp:
 
                     # seconds from file start
                     t_abs = t + (start_samp / self.fs) + extra_offset
+                    
+                    # Test to make it more like PAMGuide
+                    # SciPy t is center-of-window; PAMGuide uses start-of-window
+                    #t_abs = (t - (self.N / (2.0 * self.fs))) + (start_samp / self.fs) + extra_offset
+
+                    
 
                     # Keep calibration grid aligned
                     if (self.f is None) or (len(self.f) != len(f)) or (not np.allclose(self.f, f)):
@@ -501,6 +568,11 @@ class NoiseApp:
                     newPss_V2Hz = Sxx.T.astype(np.float64, copy=False)   # (T,F)
                     M = self.M_uPa[None, :]
                     newPss_cal = newPss_V2Hz / (M ** 2)
+                    
+                    if self.legacy_mode == "pamguide":
+                        # Apply PAMGuide-legacy normalization consistently across all metrics
+                        newPss_cal = newPss_cal * B_pg
+
 
                     all_t.append(t_abs)
                     all_psd.append(newPss_cal)
@@ -1287,6 +1359,135 @@ def plot_ltsa(instrument_group_or_list,
 
     plt.tight_layout()
     return fig
+
+
+
+from pathlib import Path
+from typing import Iterable, List, Optional, Union, Literal
+
+
+BandType = Literal["third_octave", "decade"]
+
+
+def extract_bands_df(
+    h5_path_or_paths: Union[str, Path, Iterable[Union[str, Path]]],
+    band: BandType = "third_octave",
+    averaging_period: str = "5min",
+    group_name: str = "CalCurCEAS_2024",
+) -> pd.DataFrame:
+    """
+    Extract third-octave or decade-band levels from YAWN/NoiseApp HDF5(s),
+    average over user-specified time bins, and return a DataFrame with:
+      index = time (DatetimeIndex)
+      columns = frequency in Hz (float)
+      values = band level (dB), averaged in linear space then converted to dB.
+
+    Parameters
+    ----------
+    h5_path_or_paths
+        A single .h5/.hdf5 file path, a folder path (all *.h5, *.hdf5 inside),
+        or an iterable of file paths.
+    band
+        "third_octave" uses datasets: thirdOctFreqHz + thirdoct
+        "decade"       uses datasets: decadeFreqHz   + decadeLevels
+    averaging_period
+        Pandas offset alias (e.g., "5min", "30min", "1H", "4H").
+    group_name
+        HDF5 group containing the datasets (default "CalCurCEAS_2024").
+
+    Returns
+    -------
+    pd.DataFrame
+    """
+    paths = _normalize_h5_inputs(h5_path_or_paths)
+    if not paths:
+        raise ValueError("No HDF5 files found/provided.")
+
+    if band == "third_octave":
+        freq_key, data_key = "thirdOctFreqHz", "thirdoct"
+    elif band == "decade":
+        freq_key, data_key = "decadeFreqHz", "decadeLevels"
+    else:
+        raise ValueError("band must be 'third_octave' or 'decade'.")
+
+    time_list: List[pd.DatetimeIndex] = []
+    data_list: List[np.ndarray] = []
+    freq_ref: Optional[np.ndarray] = None
+
+    for p in paths:
+        with h5py.File(p, "r") as h5:
+            g = h5[group_name]
+
+            # Time
+            t = pd.to_datetime(g["DateTime"][()].astype(str), errors="raise")
+
+            # Freqs (flatten (N,1)->(N,))
+            f = np.asarray(g[freq_key][()], dtype=float).reshape(-1)
+
+            # Levels (Ntime, Nfreq)
+            X = np.asarray(g[data_key][()], dtype=float)
+
+            if X.shape[0] != len(t):
+                raise ValueError(f"{p}: {data_key} rows {X.shape[0]} != DateTime {len(t)}")
+
+            if X.shape[1] != len(f):
+                raise ValueError(f"{p}: {data_key} cols {X.shape[1]} != {freq_key} {len(f)}")
+
+            if freq_ref is None:
+                freq_ref = f
+            else:
+                if not np.allclose(freq_ref, f, atol=1e-10, rtol=0):
+                    raise ValueError(f"{p}: frequency vector differs; cannot combine safely.")
+
+            time_list.append(pd.DatetimeIndex(t))
+            data_list.append(X)
+
+    # Concatenate + sort
+    times_all = pd.DatetimeIndex(np.concatenate([t.values for t in time_list]))
+    X_all = np.vstack(data_list)
+
+    order = np.argsort(times_all.values)
+    times_all = times_all[order]
+    X_all = X_all[order, :]
+
+    # Build native-resolution df
+    freqs = freq_ref.astype(float)  # type: ignore[union-attr]
+    df = pd.DataFrame(X_all, index=times_all, columns=freqs)
+
+    # Average in linear domain then convert back to dB
+    lin = 10.0 ** (df / 10.0)
+    lin_mean = lin.resample(averaging_period).mean()
+    out = 10.0 * np.log10(lin_mean)
+
+    # Drop empty bins
+    out = out.dropna(how="all")
+
+    # Sort columns by frequency
+    out = out.reindex(sorted(out.columns), axis=1)
+
+    return out
+
+
+def _normalize_h5_inputs(
+    h5_path_or_paths: Union[str, Path, Iterable[Union[str, Path]]]
+) -> List[str]:
+    """
+    Accept:
+      - file path
+      - folder path (collect *.h5, *.hdf5)
+      - iterable of file paths
+    Return sorted list of file paths as strings.
+    """
+    if isinstance(h5_path_or_paths, (str, Path)):
+        p = Path(h5_path_or_paths)
+        if p.is_dir():
+            files = list(p.glob("*.h5")) + list(p.glob("*.hdf5"))
+            return sorted([str(x) for x in files])
+        else:
+            return [str(p)]
+    else:
+        return sorted([str(Path(x)) for x in h5_path_or_paths])
+
 
 # -------------------- Script entry --------------------
 if __name__ == "__main__":
