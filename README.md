@@ -1,6 +1,6 @@
 # SPACIOUS-NoiseProcessing
 
-**SPACIOUS-NoiseProcessing** is a Python-based toolkit developed by the PIFSC Protected Species Division to support the processing and analysis of underwater noise data collected under the SPACIOUS program. These tools contribute to evaluating noise conditions in marine environments and assessing potential impacts on protected species, including cetaceans, turtles, and seals.
+**Yet Another Way to Analyze Noise (YAWN)** is a Python-based toolkit developed by the [PIFSC Protected Species Division](https://github.com/PIFSC-Protected-Species-Division) to support the processing and analysis of underwater noise data collected under the SPACIOUS program. These tools contribute to evaluating noise conditions in marine environments and assessing potential impacts on protected species, including cetaceans, turtles, and seals.
 
 The repository includes core modules for reading and processing acoustic recordings, as well as example scripts demonstrating practical workflows.
 
