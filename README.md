@@ -35,7 +35,7 @@ Additionally [Martin et al., 2021](https://static1.squarespace.com/static/52aa27
 
 The principal goal of of this project is to produce a reliable and flexible system for recording noise metrics. In achieving this goal I required that the system be built in a well-established language within the biological field ([Python](https://www.python.org/)) which is free and open source software under the GPL license. These characteristics make the language as accessable to as many researchers as possible. I also required that the data storage should also allow for multi-level organization, storage of large files, be accessable to multiple software packages/languages, and ultimately itegrate with the sturdy metadata managment system, [Tethys](https://tethys.sdsu.edu/). 
 
-In this repository I've used the Python-based FFT and level metric calculations by Merchant et. al (2014), but updated the functions and wrappers to allow for procesing of large numbers of sound files and storing in a HDF5 database. 
+In this repository I've used the Python-based FFT and level metric calculations by Merchant et. al (2014), but updated the functions and wrers to allow for procesing of large numbers of sound files and storing in a HDF5 database. 
 
 This repository contains a modidified version of [Merchant et. al's 2014](https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/2041-210X.12330) noise analysis tools. The major modifications between this version and the origional incude:
 
@@ -56,12 +56,12 @@ Computational results have been validated with test data against the most recent
 
 ---
 ## Validation 
-To ensure the correctness of the hybrid-millidecade noise metrics produced by the new NoiseApp implementation, we conducted a direct comparison against PyPAM (lifewatch-pypam), which provides a widely used reference implementation of the same acoustic metric. Both tools were run on the same local WAV file, using identical FFT sizes, time-averaging windows, and band definitions. After correcting for differences in calibration conventions, the two pipelines produced spectra that agreed to within approximately ±1 dB across the entire frequency band. The code for this may be found in [PypamValidation.py](https://github.com/PIFSC-Protected-Species-Division/SPACIOUS-NoiseProcessing/blob/main/NoiseProcessing/PypamValidation.py)
+To ensure the correctness of the hybrid-millidecade noise metrics produced by the new YAWN implementation, we conducted a direct comparison against PyPAM (lifewatch-pypam), which provides a widely used reference implementation of the same acoustic metric. Both tools were run on the same local WAV file, using identical FFT sizes, time-averaging windows, and band definitions. After correcting for differences in calibration conventions, the two pipelines produced spectra that agreed to within approximately ±1 dB across the entire frequency band. The code for this may be found in [PypamValidation.py](https://github.com/PIFSC-Protected-Species-Division/SPACIOUS-NoiseProcessing/blob/main/NoiseProcessing/PypamValidation.py)
 
 <img width="1128" height="696" alt="image" src="https://github.com/user-attachments/assets/253a3211-160c-4006-8797-6aee140e103c" />
 
 
-Setting Si = 0 in NoiseApp and Vpp = 2 in the PyPAM Hydrophone object is required for a fair, calibration-consistent comparison. PyPAM interprets waveform amplitudes by mapping digital samples in the range ±1 to physical volts, so full scale must correspond to ±1 V (i.e., 2 V peak-to-peak). If Vpp is left at 1, PyPAM halves the voltage and underestimates acoustic power by 6 dB. NoiseApp, by contrast, applies its sensitivity parameter Si (in dB re 1 V/µPa) directly to convert volts to µPa. Using Si = 0 ensures that both tools assume the same 1 V/µPa reference. Once these calibration conventions are aligned, the two systems produce hybrid-millidecade spectra that agree to within about 1 dB across the full band.
+Setting Si = 0 in YAWN and Vpp = 2 in the PyPAM Hydrophone object is required for a fair, calibration-consistent comparison. PyPAM interprets waveform amplitudes by mapping digital samples in the range ±1 to physical volts, so full scale must correspond to ±1 V (i.e., 2 V peak-to-peak). If Vpp is left at 1, PyPAM halves the voltage and underestimates acoustic power by 6 dB. YAWN, by contrast, applies its sensitivity parameter Si (in dB re 1 V/µPa) directly to convert volts to µPa. Using Si = 0 ensures that both tools assume the same 1 V/µPa reference. Once these calibration conventions are aligned, the two systems produce hybrid-millidecade spectra that agree to within about 1 dB across the full band.
 
 ## Getting Started
 
