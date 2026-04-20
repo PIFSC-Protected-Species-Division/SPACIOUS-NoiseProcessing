@@ -140,8 +140,7 @@ DateTimeformats = {
     'yyyymmdd_HHMMSS_fff': r'\d{8}_\d{6}_\d{3}',
     'yyyymmdd_HHMMSS': r'\d{8}_\d{6}',
     'AMAR': r'\d{8}T\d{6}',
-    'SoundTrap_1': r'\d{9}\.\d{12}',
-    'SoundTrap_2': r'\d{4}\.\d{12}',
+    'SoundTrap': r'\d+\.(\d{12})',  # capture YYMMDDHHMMSS
     'yymmdd-HHMMSS.fff': r'\d{6}-\d{6}\.\d{3}',
     
 }
@@ -150,8 +149,8 @@ DATE_FORMATS = {
     r'\d{8}_\d{6}_\d{3}': "%Y%m%d_%H%M%S_%f",
     r'\d{8}_\d{6}': "%Y%m%d_%H%M%S",
     r'\d{8}T\d{6}': "%Y%m%dT%H%M%S",
-    r'\d{9}\.\d{12}': "%Y%m%d%H%M%S%f",
-    r'\d{4}\.\d{12}': "%Y%m%d%H%M%S%f",
+    # Soundtraps
+    r'\d+\.(\d{12})': "%y%m%d%H%M%S",
     r'\d{6}-\d{6}\.\d{3}': "%y%m%d-%H%M%S.%f",
     r'\d{6}_\d{6}': "%y%m%d_%H%M%S",
 }
@@ -316,24 +315,28 @@ class NoiseApp:
         return local
     # ---------------------------------------------------------
 
-    def _date_key_from_name(self, name: str):
-        """
-        Extract YYYYMMDD from the filename using the known regex/format.
-        Falls back to file mtime date if no match.
-        """
-        base = os.path.basename(name)
-        if self.DatePattern and self.DateFormat:
-            m = re.search(self.DatePattern, base)
-            if m:
-                dt = datetime.strptime(m.group(0), self.DateFormat)
+    def _date_key_from_name(self, name: str): #XXX TEMP
+            base = os.path.basename(name)
+        
+            if self.DatePattern and self.DateFormat:
+                m = re.search(self.DatePattern, base)
+                if m:
+                    # Use first capture group if it exists, otherwise full match
+                    dt_str = m.group(1) if m.lastindex else m.group(0)
+        
+                    try:
+                        dt = datetime.strptime(dt_str, self.DateFormat)
+                        return dt.date(), dt
+                    except ValueError as e:
+                        print(f"Datetime parse failed for '{dt_str}' with format '{self.DateFormat}': {e}")
+        
+            # Fallback: local file mtime (UTC date)
+            try:
+                ts = os.path.getmtime(name)
+                dt = datetime.utcfromtimestamp(ts)
                 return dt.date(), dt
-        # Fallback: local file mtime (UTC date)
-        try:
-            ts = os.path.getmtime(name)
-            dt = datetime.utcfromtimestamp(ts)
-            return dt.date(), dt
-        except Exception:
-            return None, None
+            except Exception:
+                return None, None
 
     def _start_new_hdf5_for_date(self, day: datetime.date):
         """Create a fresh HDF5 for a day or for the full run."""
