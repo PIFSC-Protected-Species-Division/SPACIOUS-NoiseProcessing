@@ -162,6 +162,7 @@ class NoiseApp:
                  Si=-184, clipFileSec=0, channel=0, r=0.5,
                  winname='Hann', lcut=None, hcut=None, aveSec=60,
                  pref=1, rmDC=True, legacy_mode = None, Si_units='V/µPa',
+                 split_hdf5_by_day=True,
                  tol_method="psd_sum", # "psd_sum" (current) or "ansi_filterbank"
                  tol_order=3):
         """
@@ -196,6 +197,7 @@ class NoiseApp:
         self.aveSec = aveSec
         self.pref = pref
         self.rmDC = rmDC
+        self.split_hdf5_by_day = bool(split_hdf5_by_day)
 
         # Derived/initialized later
         self.fs = None
@@ -334,8 +336,11 @@ class NoiseApp:
             return None, None
 
     def _start_new_hdf5_for_date(self, day: datetime.date):
-        """Create a fresh HDF5 per calendar day."""
-        projName = f"{self.ProjName}_{day.strftime('%Y%m%d')}_{datetime.now().strftime('%H%M%S')}.h5"
+        """Create a fresh HDF5 for a day or for the full run."""
+        if self.split_hdf5_by_day:
+            projName = f"{self.ProjName}_{day.strftime('%Y%m%d')}.h5"
+        else:
+            projName = f"{self.ProjName}.h5"
         fullPath = os.path.join(self.DatabaseLoc, projName)
         self.fullPath = fullPath
         self.initilize_HDF5(fullPath, projName)
@@ -482,7 +487,7 @@ class NoiseApp:
     def run_analysis(self):
         """
         Stream inputs (local or GCS), compute PSD, average into aveSec bins,
-        compute metrics, and write into an HDF5 file per *date* encountered.
+        compute metrics, and write into HDF5 files, optionally split by date.
         """
         _ = self.prep_audio()
         
@@ -499,7 +504,7 @@ class NoiseApp:
 
 
         current_date_key = None   # YYYYMMDD
-        data_start = 0            # row cursor within current day's HDF5
+        data_start = 0            # row cursor within active HDF5
 
         with tempfile.TemporaryDirectory() as tmproot:
             for inp in self.audiofiles:
@@ -510,14 +515,16 @@ class NoiseApp:
                 file_date, file_ts_dt = self._date_key_from_name(local_path)
                 date_key = file_date.strftime("%Y%m%d") if file_date else "unknown"
 
-                # Rotate HDF5 when date changes
-                if date_key != current_date_key:
+                # Rotate HDF5 when date changes, or initialize once for a single output file
+                should_rotate = self.fullPath is None
+                if self.split_hdf5_by_day:
+                    should_rotate = should_rotate or (date_key != current_date_key)
+
+                if should_rotate:
                     current_date_key = date_key
-                    projName = f"{self.ProjName}_{date_key}.h5"
-                    self.fullPath = os.path.join(self.DatabaseLoc, projName)
-                    self.initilize_HDF5(self.fullPath, projName)  # write metadata
-                    data_start = 0
-                    print(f"Switched to new HDF5: {projName}")
+                    self._start_new_hdf5_for_date(file_date or datetime.utcnow().date())
+                    data_start = 0 if self.split_hdf5_by_day else data_start
+                    print(f"Writing to HDF5: {os.path.basename(self.fullPath)}")
 
                 print(os.path.basename(local_path))
 
@@ -1502,7 +1509,8 @@ if __name__ == "__main__":
         DepName='SG680',
         DatabaseLoc=out_dir,
         rmDC=True,
-        Si_units='V/µPa'
+        Si_units='V/µPa',
+        split_hdf5_by_day=False
     )
 
     app.run_analysis()

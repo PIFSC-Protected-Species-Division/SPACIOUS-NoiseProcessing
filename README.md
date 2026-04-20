@@ -10,7 +10,7 @@ ____________
 ## TL;DR
 An Python-based methodology for storing noise metrics in [HDF5 (Hierarchical Data Format version 5)](https://www.hdfgroup.org/solutions/hdf5/)  files. The code is modularized so a user can pick and chose which metrics to store. This repository is licensed as open source software to help the community deal with data irregularities. 
 
-Several pre-defined soundscape metrics that save to daily HDF5 files
+Several pre-defined soundscape metrics that save to HDF5 files, with optional daily splitting
 1) Hybrid-millidecade band levels
 2) Third-octave band levels
 3) Decade band levels
