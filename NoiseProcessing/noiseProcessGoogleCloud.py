@@ -1224,10 +1224,11 @@ class NoiseApp:
         a13 = 10.0 * np.log10(np.maximum((1.0 / float(B)) * P13 / (self.pref ** 2), 1e-30))
         return a13
 
-    def calcHybridMilidecades(self, apsd, fcross=455.0):
+    def calcHybridMilidecades(self, apsd, fcross=435.0):
         """
         apsd: (T, F) in dB re 1 µPa²/Hz on the SAME freq grid as self.f.
-        Hybrid convention: use 1 Hz bands up to 455 Hz, then millidecade bands.
+        Hybrid convention (erratum): use 1 Hz bands up to 434 Hz,
+        then millidecade bands beginning at 435 Hz.
         Returns: (T, nBands) band-averaged spectral density (dB re 1 µPa²/Hz).
         """
         df = (self.f[1] - self.f[0]) if len(self.f) > 1 else (self.fs / self.N)
@@ -1253,11 +1254,8 @@ class NoiseApp:
                 use_fft_res_at_bottom=False
             )
     
-            # keep only bands whose UPPER EDGE exceeds fcross to ensure continuity
-            logbands = logbands[logbands[:, 2] > fcross]
-            if logbands.size > 0:
-                # avoid a gap right at the crossover
-                logbands[0, 0] = max(fcross, logbands[0, 0])
+            # Keep log bands from the transition center upward.
+            logbands = logbands[logbands[:, 1] >= fcross]
     
             bands = np.vstack([low, logbands]) if logbands.size > 0 else low
             self.HbrdMlDec = {'freqLims': bands}
@@ -1265,22 +1263,26 @@ class NoiseApp:
         bands = self.HbrdMlDec['freqLims']
         T = apsd.shape[0]
         out = np.full((T, bands.shape[0]), np.nan, dtype=float)
+
+        # Treat each FFT line as a finite-width bin so band edges can include
+        # proportional contributions from boundary bins.
+        bin_lo = self.f - 0.5 * df
+        bin_hi = self.f + 0.5 * df
     
         for i, (flo, fcen, fhi) in enumerate(bands):
-            # half-open except make the very last band inclusive on the right
-            if i == bands.shape[0] - 1:
-                idx = np.where((self.f >= flo) & (self.f <= fhi))[0]
-            else:
-                idx = np.where((self.f >= flo) & (self.f <  fhi))[0]
-    
+            overlap_hz = np.minimum(bin_hi, fhi) - np.maximum(bin_lo, flo)
+            overlap_hz = np.maximum(overlap_hz, 0.0)
+            idx = np.where(overlap_hz > 0.0)[0]
+
             if idx.size == 0:
                 k = int(np.clip(np.searchsorted(self.f, fcen, side='left'), 0, len(self.f) - 1))
                 out[:, i] = apsd[:, k]
             elif idx.size == 1:
                 out[:, i] = apsd[:, idx[0]]
             else:
-                p_lin = np.nansum(10.0 ** (apsd[:, idx] / 10.0), axis=1) * df  # µPa² over band
-                bw = max(fhi - flo, df)
+                w = overlap_hz[idx]
+                p_lin = np.nansum((10.0 ** (apsd[:, idx] / 10.0)) * w[None, :], axis=1)
+                bw = max(float(np.sum(w)), df)
                 avg_density = p_lin / bw                                       # µPa²/Hz
                 out[:, i] = 10.0 * np.log10(np.maximum(avg_density, 1e-30) / (self.pref ** 2))
     
