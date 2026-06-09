@@ -46,6 +46,45 @@ from noiseProcessGoogleCloud import plot_milidecade_statistics, plot_ltsa
 #Example for plotting (uncomment and point to an HDF5 from out_dir)
 h5_path = r"X:\\\\Kaitlin_Palmer\\\\CalCursea_680_Noise\\\\sg680_CalCurCEAS_Sep2024_20241001.h5"
 
+
+# With the included plotting function, make a plot
+with h5py.File(h5_path, 'r') as hdf_file:
+    Project = hdf_file['CalCurCEAS_2024']
+    plot_milidecade_statistics(Project) # This takes a while
+    fig = plot_ltsa(Project, 
+                    averaging_period='1hr',
+                    title="LTSA – Day 1 1hr Resolution",
+                    freq_scaled=True,   # real frequency on y
+                    log_freq=True)
+    
+    
+    
+    
+
+#%% Plot example days
+
+# Plot multiple
+data_dir = r"X:\\\\Kaitlin_Palmer\\\\CalCursea_680_Noise\\\\"
+paths = sorted(Path(data_dir).glob("*.h5"))[3:60]  # adjust pattern
+groups = []
+
+for p in paths:
+    h5 = h5py.File(p, "r")
+    # adjust group name as appropriate for your files
+    groups.append(h5["CalCurCEAS_2024"])
+    
+
+#plot_milidecade_statistics(groups, pBands=[5, 25, 50, 75, 95])
+fig = plot_ltsa(groups, 
+                averaging_period='1d', # one day
+                title="LTSA – 53 days 1 day resolution",
+                freq_scaled=True,   # real frequency on y
+                log_freq=True)
+
+
+#%% Data exploration
+
+
 # Explore the hdf5 file a bit
 hdf_file = h5py.File(h5_path, 'r')
 
@@ -66,43 +105,4 @@ hdf_file[projectName[0]]['decadeFreqHz'][0:9] # Lower frequency range
 # Lets look at the first  ten decade levels and their frequencies
 hdf_file[projectName[0]]['hybridMiliDecLevels'][0:10] # Values
 hdf_file[projectName[0]]['hybridDecFreqHz'][0:10] # Lower frequency range
-
-
-# With the included plotting function, make a plot
-with h5py.File(h5_path, 'r') as hdf_file:
-    Project = hdf_file['CalCurCEAS_2024']
-    #plot_milidecade_statistics(Project) # This takes a while
-    fig = plot_ltsa(Project, averaging_period='30min',
-                    titleText="LTSA – Day 1",
-                    freq_scaled=True,   # real frequency on y
-                    log_freq=False)
-    fig = plot_ltsa(Project, averaging_period='30min',
-                    titleText="LTSA – Day 1",
-                    freq_scaled=True,   # real frequency on y
-                    log_freq=True)
-    #plot_ltsa(Project) # This is still in development
-    
-    
-
-#%% Plot example days
-
-# Plot multiple
-data_dir = r"X:\\\\Kaitlin_Palmer\\\\CalCursea_680_Noise\\\\"
-paths = sorted(Path(data_dir).glob("*.h5"))[3:30]  # adjust pattern
-groups = []
-
-for p in paths:
-    h5 = h5py.File(p, "r")
-    # adjust group name as appropriate for your files
-    groups.append(h5["CalCurCEAS_2024"])
-    
-
-#plot_milidecade_statistics(groups, pBands=[5, 25, 50, 75, 95])
-fig = plot_ltsa(groups, 
-                #averaging_period='30min',
-                #averaging_period='1h', # ONE HOUR
-                averaging_period='1d', # one day
-                titleText="LTSA – Day 1",
-                freq_scaled=True,   # real frequency on y
-                log_freq=True)
 

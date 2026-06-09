@@ -260,10 +260,18 @@ class NoiseApp:
       uPa^2/Hz.
     """
 
-    def __init__(self, soundFilePath, ProjName, DepName, DatabaseLoc,
-                 Si=-184, clipFileSec=0, channel=0, r=0.5,
-                 winname='Hann', lcut=None, hcut=None, aveSec=60,
-                 pref=1, rmDC=True, legacy_mode = None, Si_units='V/µPa',
+    def __init__(self, soundFilePath, 
+                 ProjName, 
+                 DepName, 
+                 DatabaseLoc,
+                 Si=-184, 
+                 clipFileSec=0, 
+                 channel=0, r=0.5,
+                 winname='Hann',
+                 lcut=None, 
+                 hcut=None, aveSec=60,
+                 pref=1, rmDC=True, 
+                 legacy_mode = None, Si_units='V/µPa',
                  split_hdf5_by_day=True,
                  existing_deployment_mode='error',
                  calibration_info=None,
