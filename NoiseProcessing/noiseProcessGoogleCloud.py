@@ -260,18 +260,10 @@ class NoiseApp:
       uPa^2/Hz.
     """
 
-    def __init__(self, soundFilePath, 
-                 ProjName, 
-                 DepName, 
-                 DatabaseLoc,
-                 Si=-184, 
-                 clipFileSec=0, 
-                 channel=0, r=0.5,
-                 winname='Hann',
-                 lcut=None, 
-                 hcut=None, aveSec=60,
-                 pref=1, rmDC=True, 
-                 legacy_mode = None, Si_units='V/µPa',
+    def __init__(self, soundFilePath, ProjName, DepName, DatabaseLoc,
+                 Si=-184, clipFileSec=0, channel=0, r=0.5,
+                 winname='Hann', lcut=None, hcut=None, aveSec=60,
+                 pref=1, rmDC=True, legacy_mode = None, Si_units='V/µPa',
                  split_hdf5_by_day=True,
                  existing_deployment_mode='error',
                  calibration_info=None,
@@ -2288,38 +2280,37 @@ def export_metric_csv(
                 source_file = str(Path(p).name)
                 n_time, n_freq = X.shape
 
-                base = pd.DataFrame({
-                    "datetime": np.repeat(times.astype(str).to_numpy(), n_freq),
-                    "source_file": source_file,
-                    "deployment": str(resolved_group_name),
-                    "metric": metric_key,
-                    "value": X.reshape(-1),
-                })
-
                 if freq_key is None:
-                    base["frequency_hz"] = np.nan
-                    base["frequency_low_hz"] = np.nan
-                    base["frequency_high_hz"] = np.nan
+                    # Single-value metric (broadband, latitude, longitude) — one row per timestamp
+                    base = pd.DataFrame({
+                        "datetime": times.astype(str).to_numpy(),
+                        "source_file": source_file,
+                        "deployment": str(resolved_group_name),
+                        "metric": metric_key,
+                        "value": X.reshape(-1),
+                    })
                 else:
+                    # Frequency-band metric — wide form: one row per timestamp, one column per band
                     farr = np.asarray(g[freq_key][()], dtype=float)
 
                     if farr.ndim == 2 and farr.shape[1] == 3:
                         flow = farr[:, 0]
-                        fcenter = farr[:, 1]
                         fhigh = farr[:, 2]
+                        col_names = [f"{fl:.0f}-{fh:.0f}_Hz" for fl, fh in zip(flow, fhigh)]
                     else:
                         fcenter = farr.reshape(-1)
-                        flow = np.full_like(fcenter, np.nan, dtype=float)
-                        fhigh = np.full_like(fcenter, np.nan, dtype=float)
+                        col_names = [f"{fc:.0f}_Hz" for fc in fcenter]
 
-                    if len(fcenter) != n_freq:
+                    if len(col_names) != n_freq:
                         raise ValueError(
-                            f"{p} [{resolved_group_name}]: frequency bins {len(fcenter)} != {data_key} columns {n_freq}"
+                            f"{p} [{resolved_group_name}]: frequency bins {len(col_names)} != {data_key} columns {n_freq}"
                         )
 
-                    base["frequency_hz"] = np.tile(fcenter, n_time)
-                    base["frequency_low_hz"] = np.tile(flow, n_time)
-                    base["frequency_high_hz"] = np.tile(fhigh, n_time)
+                    base = pd.DataFrame(X, columns=col_names)
+                    base.insert(0, "metric", metric_key)
+                    base.insert(0, "deployment", str(resolved_group_name))
+                    base.insert(0, "source_file", source_file)
+                    base.insert(0, "datetime", times.astype(str).to_numpy())
 
                 frames.append(base)
 
