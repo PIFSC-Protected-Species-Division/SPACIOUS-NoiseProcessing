@@ -139,15 +139,15 @@ def buffer(data, duration, dataOverlap):
     return tempBuf2
 
 
-# Regex patterns and datetime formats for filename parsing
-DateTimeformats = {
-    'yyyymmdd_HHMMSS_fff': r'\d{8}_\d{6}_\d{3}',
-    'yyyymmdd_HHMMSS': r'\d{8}_\d{6}',
-    'AMAR': r'\d{8}T\d{6}',
-    'SoundTrap': r'\d+\.(\d{12})',  # capture YYMMDDHHMMSS
-    'yymmdd-HHMMSS.fff': r'\d{6}-\d{6}\.\d{3}',
+# # Regex patterns and datetime formats for filename parsing
+# DateTimeformats = {
+#     'yyyymmdd_HHMMSS_fff': r'\d{8}_\d{6}_\d{3}',
+#     'yyyymmdd_HHMMSS': r'\d{8}_\d{6}',
+#     'AMAR': r'\d{8}T\d{6}',
+#     'SoundTrap': r'\d+\.(\d{12})',  # capture YYMMDDHHMMSS
+#     'yymmdd-HHMMSS.fff': r'\d{6}-\d{6}\.\d{3}',
     
-}
+# }
 
 DATE_FORMATS = {
     r'\d{8}_\d{6}_\d{3}': "%Y%m%d_%H%M%S_%f",
@@ -157,6 +157,9 @@ DATE_FORMATS = {
     r'\d+\.(\d{12})': "%y%m%d%H%M%S",
     r'\d{6}-\d{6}\.\d{3}': "%y%m%d-%H%M%S.%f",
     r'\d{6}_\d{6}': "%y%m%d_%H%M%S",
+    # Wave Glider: yyyymmdd-hhmmss
+    r'\d{8}-\d{6}': "%Y%m%d-%H%M%S",
+    
 }
 
 
