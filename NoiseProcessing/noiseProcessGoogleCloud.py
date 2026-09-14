@@ -19,7 +19,7 @@ from datetime import datetime, time, timedelta
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
+from  matplotlib import ticker
 from matplotlib.colors import Normalize
 
 import soundfile as sf
@@ -277,9 +277,21 @@ class NoiseApp:
                  location_lat_col='latitude',
                  location_lon_col='longitude',
                  tol_method="psd_sum", # "psd_sum" (current) or "ANSI"
-                 tol_order=3):
+                 tol_order=3,
+                 local_staging_dir=None,
+                 sync_every_n_files=25):
         """
         Create long-term noise metrics from audio files (local folder or GCS).
+
+        local_staging_dir : str or None, default None
+            If set, the output HDF5 is written to this local folder while
+            processing and periodically copied to DatabaseLoc, instead of
+            writing (resizing/reopening) the file on a shared/network drive
+            on every single audio file.
+        sync_every_n_files : int, default 25
+            How often (in processed files) to copy the staged HDF5 up to
+            DatabaseLoc when local_staging_dir is set. Always syncs once at
+            the end of a run and before rotating to a new day file.
         """
         # Inputs
         self.soundFilePath = soundFilePath
@@ -348,6 +360,7 @@ class NoiseApp:
         self.DatePattern = None
         self.DateFormat = None
         self.audiofiles = None
+        self.expected_rows = None  # preallocation estimate, set in prep_audio()
 
         # Precomputed params containers
         self.decPrms = None
@@ -362,6 +375,13 @@ class NoiseApp:
         self.temp_dir = tempfile.mkdtemp(prefix="noiseapp_")
         self._tmp_paths_to_delete = []
         self._gcs_storage_client = None  # cached Client
+
+        # Local scratch staging for HDF5 writes (avoids per-file round trips
+        # to a shared/network drive that other VMs are also hitting)
+        self.local_staging_dir = local_staging_dir
+        self.sync_every_n_files = int(sync_every_n_files)
+        self._final_fullPath = None
+        self._files_since_sync = 0
         
         
         
@@ -597,9 +617,77 @@ class NoiseApp:
             projName = f"{self.ProjName}_{day.strftime('%Y%m%d')}.h5"
         else:
             projName = f"{self.ProjName}.h5"
-        fullPath = os.path.join(self.DatabaseLoc, projName)
+
+        final_path = os.path.join(self.DatabaseLoc, projName)
+
+        if self.local_staging_dir:
+            # Flush whatever was staged for the previous file before switching targets
+            self._sync_to_shared_drive(force=True)
+            os.makedirs(self.local_staging_dir, exist_ok=True)
+            local_path = os.path.join(self.local_staging_dir, projName)
+            if os.path.exists(final_path) and not os.path.exists(local_path):
+                shutil.copy2(final_path, local_path)
+            fullPath = local_path
+        else:
+            fullPath = final_path
+
         self.fullPath = fullPath
+        self._final_fullPath = final_path
+        self._files_since_sync = 0
         return self.initilize_HDF5(fullPath, projName)
+
+    def _sync_to_shared_drive(self, force=False):
+        """Copy the locally-staged HDF5 up to DatabaseLoc, batching network writes."""
+        if not self.local_staging_dir or self.fullPath == self._final_fullPath:
+            return
+        self._files_since_sync += 1
+        if not force and self._files_since_sync < self.sync_every_n_files:
+            return
+        os.makedirs(os.path.dirname(self._final_fullPath), exist_ok=True)
+        shutil.copy2(self.fullPath, self._final_fullPath)
+        self._files_since_sync = 0
+
+    def _preallocate_main_datasets(self, expected_rows):
+        """Create the main per-file datasets at their full estimated size up
+        front (fillvalue=NaN), so later writes just fill in values instead of
+        resizing the dataset on every audio file."""
+        delf = (self.f[1] - self.f[0]) if len(self.f) > 1 else (self.fs / self.N)
+        dummy_psd = np.full((1, len(self.f)), 1e-30)
+        dummy_apsd = 10.0 * np.log10(dummy_psd / (self.pref ** 2))
+
+        dummy_milidec = self.calcHybridMilidecades(dummy_apsd)
+        dummy_broadband = self.calcBroadband(dummy_psd, delf)
+        if self.tol_method == "ANSI":
+            dummy_tol = self.calc13OctaveANSI(dummy_psd, B=1.0)
+        else:
+            dummy_tol = self.calc13Octave(dummy_psd, B=1.0)
+        dummy_decade = self.calcDecadeband(dummy_psd)
+
+        self.writeDatatoHDF5(np.array(["0000-00-00T00:00:00"]), 'DateTime',
+                             data_start=0, max_rows=expected_rows, storage_mode='str')
+        self.writeDatatoHDF5(dummy_milidec, 'hybridMiliDecLevels', data_start=0, max_rows=expected_rows)
+        self.writeDatatoHDF5(dummy_broadband, 'broadband', data_start=0, max_rows=expected_rows)
+        self.writeDatatoHDF5(dummy_tol, 'thirdoct', data_start=0, max_rows=expected_rows)
+        self.writeDatatoHDF5(dummy_decade, 'decadeLevels', data_start=0, max_rows=expected_rows)
+
+    def _trim_main_datasets(self, final_row_count):
+        """Shrink preallocated datasets down to the rows actually written."""
+        if not self.fullPath or final_row_count <= 0:
+            return
+        with self._open_hdf5_with_retry(self.fullPath, "a") as hdf:
+            grp = hdf.get(self.DepName)
+            if grp is None:
+                return
+            for name in ('DateTime', 'hybridMiliDecLevels', 'broadband',
+                         'thirdoct', 'decadeLevels', 'latitude', 'longitude'):
+                if name not in grp:
+                    continue
+                dset = grp[name]
+                if dset.shape[0] > final_row_count:
+                    if dset.ndim == 1:
+                        dset.resize((final_row_count,))
+                    else:
+                        dset.resize((final_row_count, dset.shape[1]))
 
     def get_datetime_format(self, filename):
         """Detect the first supported datetime pattern present in a filename."""
@@ -798,6 +886,16 @@ class NoiseApp:
             probe_path = self._download_to_temp(inputs[0], td)
             info = sf.info(probe_path)
             self.fs = int(info.samplerate)
+
+        # Estimate total output rows so the main datasets can be preallocated
+        # once instead of resized on every file (assumes files are roughly the
+        # same duration/sample rate, which is fair for one deployment).
+        # Only meaningful when everything goes into a single HDF5 file.
+        if not self.split_hdf5_by_day:
+            probe_duration_sec = info.frames / float(info.samplerate)
+            margin = 1.10  # buffer for files running slightly long
+            self.expected_rows = max(1, int(np.ceil(
+                len(inputs) * probe_duration_sec / self.aveSec * margin)))
     
         # ----- Analysis band defaults FIRST -----
         if self.lcut is None:
@@ -870,6 +968,8 @@ class NoiseApp:
                             return
                         data_start = 0 if self.split_hdf5_by_day else data_start
                         print(f"Writing to HDF5: {os.path.basename(self.fullPath)}")
+                        if data_start == 0 and self.expected_rows:
+                            self._preallocate_main_datasets(self.expected_rows)
 
                     print(os.path.basename(local_path))
 
@@ -980,6 +1080,7 @@ class NoiseApp:
                                              data_start=0, max_rows=len(self.decPrms['decade_edges']))
 
                     data_start += len(dt_bins)
+                    self._sync_to_shared_drive()
                 finally:
                     if local_path and self._is_gcs_path(inp) and os.path.exists(local_path):
                         try:
@@ -987,6 +1088,8 @@ class NoiseApp:
                         except OSError:
                             pass
 
+        self._trim_main_datasets(data_start)
+        self._sync_to_shared_drive(force=True)
         return
 
     def writeDatatoHDF5(self, new_data, data_type, data_start=0,
