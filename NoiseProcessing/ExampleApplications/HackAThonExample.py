@@ -115,6 +115,9 @@ for deployment in deployments:
 
     # Go do the thing!
     app.run_analysis()
+    
+    
+    #%% 
 import h5py
 import glob
 from pathlib import Path
@@ -144,7 +147,7 @@ list_hdf5_deployments(h5_path)
 
 
 
-#%% Available Plotting Options, third octaves, SPD, LTSA
+
 
 # Plots are available for one dataset (i.e. deployment at a time) so you
 # should know the deployment id or use list_hdf5_deployments to recover them
@@ -160,7 +163,7 @@ Glider_id = "sg607_20260128"
 
 # Output path and name comprised of several parts, for simplicity you could
 # use just one string
-save_file = os.path.join(figDir, f"{Glider_id}_milidecade_SPD.png")
+save_file = os.path.join(figDir, f"{Glider_id}_milidecade_SPD.pfd")
 
 fig = plot_milidecade_statistics(hdf_file['GliderRodeo'], 
                                  title=Glider_id, # If you want a custom title
@@ -177,9 +180,9 @@ save_LTSA = os.path.join(figDir, f"{Glider_id}_5min_ltsa.png")
 fig = plot_ltsa(hdf_file['GliderRodeo'], 
                 title=Glider_id, 
                 save_path=save_LTSA,
-                averaging_period='1d',  #Pandas offset alias for time-averaging (e.g., '5min', '1min', '1H',12d).
+                averaging_period='8min',  #Pandas offset alias for time-averaging (e.g., '5min', '1min', '1H',12d).
                 freq_scaled=True,   # real frequency on y
-                log_freq=True,
+                log_freq=False,
                 dpi=150)
 plt.close(fig)
 
