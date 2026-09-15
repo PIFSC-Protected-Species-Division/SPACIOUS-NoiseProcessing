@@ -54,6 +54,194 @@ def print_h5_tree(h5_path, max_depth=6):
 # example:
 # print_h5_tree(r"C:\path\to\one_file.h5")
 
+def summarize_hdf5_file(h5_path, group_name=None):
+    """
+    Print a compact summary for one HDF5 file or one/many deployment groups.
+
+    Parameters
+    ----------
+    h5_path : str or Path
+        Path to the HDF5 file.
+    group_name : str, list/tuple of str, or None
+        If None, summarize all deployment groups in the HDF5 file.
+
+    Returns
+    -------
+    dict
+        Nested dictionary keyed by deployment/group name with a summary for each.
+
+    Notes
+    -----
+    This function prints information to the console and returns the same data to
+    the caller for programmatic inspection.
+    """
+    h5_path = str(h5_path)
+    with h5py.File(h5_path, "r") as h5:
+        if group_name is None:
+            group_names = [name for name in h5.keys() if isinstance(h5[name], h5py.Group)]
+        elif isinstance(group_name, (list, tuple)):
+            group_names = list(group_name)
+        else:
+            group_names = [group_name]
+
+        if not group_names:
+            raise ValueError(f"No deployment groups found in '{h5_path}'.")
+
+        results = {}
+        print(f"\nHDF5 summary: {h5_path}")
+        print(f"Deployment groups found: {len(group_names)}")
+        print("Deployment names: " + ", ".join(str(name) for name in group_names))
+
+        for gname in group_names:
+            if gname not in h5 or not isinstance(h5[gname], h5py.Group):
+                raise KeyError(f"Group '{gname}' not found in '{h5_path}'.")
+
+            g = h5[gname]
+            group_summary = {"group": gname}
+            print(f"\nGroup: {gname}")
+
+            datasets = [name for name in g.keys() if isinstance(g[name], h5py.Dataset)]
+            group_summary["datasets"] = datasets
+            print(f"  Datasets: {len(datasets)}")
+
+            # Date range from DateTime dataset
+            if "DateTime" in g:
+                raw_ts = np.asarray(g["DateTime"][()], dtype=str)
+                valid_mask = (raw_ts != "0000-00-00 00:00:00") & (raw_ts != "0000-00-00T00:00:00")
+                valid_ts = raw_ts[valid_mask]
+                if valid_ts.size:
+                    dt = pd.to_datetime(valid_ts, errors="coerce")
+                    dt = dt[~dt.isna()]
+                    if len(dt):
+                        group_summary["start_time"] = str(dt.min())
+                        group_summary["end_time"] = str(dt.max())
+                        group_summary["time_span"] = str(dt.max() - dt.min())
+                        group_summary["n_time_bins"] = int(len(dt))
+                        print(f"  Start time: {dt.min()}")
+                        print(f"  End time:   {dt.max()}")
+                        print(f"  Time span:  {dt.max() - dt.min()}")
+                        print(f"  Time bins:  {len(dt)}")
+                    else:
+                        print("  Start time: N/A")
+                        print("  End time:   N/A")
+                else:
+                    print("  Start time: N/A")
+                    print("  End time:   N/A")
+            else:
+                print("  DateTime dataset not found")
+
+            # Sample rate and analysis settings are stored in the deployment's
+            # Parameters group as HDF5 attributes.
+            params_group = g["Parameters"] if "Parameters" in g and isinstance(g["Parameters"], h5py.Group) else None
+            attrs_source = params_group.attrs if params_group is not None else g.attrs
+
+            fs = None
+            for key in ("fs", "sample_rate", "samplerate"):
+                if key in attrs_source:
+                    fs = attrs_source[key]
+                    break
+            if fs is not None:
+                fs_val = float(fs)
+                group_summary["sample_rate_hz"] = fs_val
+                print(f"  Sample rate: {fs_val:.6g} Hz")
+            else:
+                print("  Sample rate: not recorded in metadata")
+
+            # Analysis limits from attrs if available
+            low_cut = None
+            high_cut = None
+            for key in ("lcut", "low_cut", "low_frequency_hz"):
+                if key in attrs_source:
+                    low_cut = float(attrs_source[key])
+                    break
+            for key in ("hcut", "high_cut", "high_frequency_hz"):
+                if key in attrs_source:
+                    high_cut = float(attrs_source[key])
+                    break
+            if low_cut is not None:
+                group_summary["low_frequency_hz"] = low_cut
+                print(f"  Low cutoff: {low_cut:.6g} Hz")
+            if high_cut is not None:
+                group_summary["high_frequency_hz"] = high_cut
+                print(f"  High cutoff: {high_cut:.6g} Hz")
+
+            # Frequency range from common datasets
+            freq_key = None
+            for candidate in ("hybridDecFreqHz", "thirdOctFreqHz", "decadeFreqHz", "freq"):
+                if candidate in g:
+                    freq_key = candidate
+                    break
+            if freq_key is not None:
+                farr = np.asarray(g[freq_key][:])
+                if farr.size:
+                    flat = farr.reshape(-1)
+                    low_f = float(np.nanmin(flat))
+                    high_f = float(np.nanmax(flat))
+                    group_summary["frequency_min_hz"] = low_f
+                    group_summary["frequency_max_hz"] = high_f
+                    group_summary["frequency_bins"] = int(flat.size)
+                    print(f"  Frequency range: {low_f:.6g} to {high_f:.6g} Hz ({flat.size} bins)")
+                    print(f"  Frequency dataset: {freq_key}")
+
+            # Major data matrices and array shapes
+            for key in ("hybridMiliDecLevels", "thirdoct", "decadeLevels", "broadband"):
+                if key in g:
+                    arr = np.asarray(g[key][:])
+                    group_summary[f"{key}_shape"] = tuple(arr.shape)
+                    print(f"  {key}: shape={arr.shape}")
+
+            for key in ("latitude", "longitude"):
+                if key in g:
+                    arr = np.asarray(g[key][:])
+                    group_summary[f"{key}_shape"] = tuple(arr.shape)
+                    print(f"  {key}: shape={arr.shape}")
+
+            results[gname] = group_summary
+
+        return results
+
+
+# example:
+# print_h5_tree(r"C:\path\to\one_file.h5")
+# summarize_hdf5_file(r"C:\path\to\one_file.h5")
+
+
+def list_hdf5_deployments(h5_path):
+    """
+    Print a compact list of deployment names and their sample rate metadata.
+
+    Parameters
+    ----------
+    h5_path : str or Path
+        Path to the HDF5 file.
+
+    Returns
+    -------
+    list[str]
+        Deployment names found in the file.
+    """
+    h5_path = str(h5_path)
+    with h5py.File(h5_path, "r") as h5:
+        deployment_names = [name for name in h5.keys() if isinstance(h5[name], h5py.Group)]
+
+        if not deployment_names:
+            print(f"No deployment groups found in {h5_path}")
+            return []
+
+        print(f"\nHDF5 deployments in {h5_path}:")
+        for name in deployment_names:
+            g = h5[name]
+            params_group = g["Parameters"] if "Parameters" in g and isinstance(g["Parameters"], h5py.Group) else None
+            attrs = params_group.attrs if params_group is not None else g.attrs
+            fs = attrs.get("fs", None)
+            fs_str = f"  fs={float(fs):.6g} Hz" if fs is not None else "  fs=unknown"
+            print(f"  - {name}{fs_str}")
+
+        return deployment_names
+
+
+# example:
+# list_hdf5_deployments(r"C:\path\to\one_file.h5")
 
 
 def get_band_table(fft_bin_size,
