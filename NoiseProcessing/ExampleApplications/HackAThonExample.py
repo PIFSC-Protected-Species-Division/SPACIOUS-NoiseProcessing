@@ -18,8 +18,10 @@ import matplotlib.pyplot as plt
 
 # Where you stored your favoirite glider file
 h5_path = r"X:\Kaitlin_Palmer\GliderRodeo\sg607_20260128\\sg607_20260128.h5"
-summarize_hdf5_file(h5_path) # The basics of the data and dataset names (e.g. OH CRAP I FORGET)
 figDir = r"X:\\Kaitlin_Palmer\\GliderRodeo\\TestFigures\\"
+
+
+summarize_hdf5_file(h5_path) # The basics of the data and dataset names (e.g. OH CRAP I FORGET)
 
 
 # I only want info on one dataset in the HDF5
@@ -27,6 +29,9 @@ summarize_hdf5_file(h5_path, group_name='GliderRodeo')
 
 # I only need the deployment names (because I forget just those)
 list_hdf5_deployments(h5_path)
+
+# Or if you just want to know what the run parameters were set at
+# hdf_file['GliderRodeo']['Parameters'].attrs.keys()
 
 
 # Plots are available for one dataset (i.e. deployment at a time) so you
@@ -36,6 +41,11 @@ list_hdf5_deployments(h5_path)
 
 hdf_file = h5py.File(h5_path, 'r')
 Glider_id = "sg607_20260128"
+
+# Try loading the data (file['deployment']['metric'][0:10])
+hdf_file['GliderRodeo']['broadband']
+
+
 
 # Output path and name comprised of several parts, for simplicity you could
 # use just one string
@@ -47,12 +57,11 @@ fig = plot_milidecade_statistics(hdf_file['GliderRodeo'],
                                  pBands=[5, 25, 50, 75, 95], # Probability Bands to show
                                  dpi= 150)  # Resolution (for publicaiton figures)
 
-# This takes a while
+
 plt.close(fig)
 
 # Create an LTSA
 save_LTSA = os.path.join(figDir, f"{Glider_id}_5min_ltsa.png")
-
 fig = plot_ltsa(hdf_file['GliderRodeo'], 
                 title=Glider_id, 
                 save_path=save_LTSA,
@@ -63,7 +72,7 @@ fig = plot_ltsa(hdf_file['GliderRodeo'],
 plt.close(fig)
 
 
-# You can also just tell it to make a plot
+# And finally third ocatve, as above you really only need the loaded file and deployment name
 plot_third_octave_bands(hdf_file['GliderRodeo'])
 
 

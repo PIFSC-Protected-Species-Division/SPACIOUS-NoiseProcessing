@@ -1,0 +1,15 @@
+# 1. Navigate to your project directory
+cd ~/hackathon-shared-repo/noise-fx-calc/SPACIOUS-NoiseProcessing
+# 2. Create the virtual environment
+python3 -m venv .venv
+# 3. Activate the environment
+source .venv/bin/activate
+# 4. Upgrade core build tools
+pip install --upgrade pip setuptools wheel
+# 5. Install pinned scientific & audio packages
+pip install scipy==1.16.3 pandas openpyxl soundfile librosa resampy matplotlib numpy
+# 6. Install pyhydrophone without dragging in conflicting dependencies
+pip install --no-deps pyhydrophone==0.3.1
+# 7. Move into the script directory and run your code
+cd NoiseProcessing
+python HackAThonExample.py
