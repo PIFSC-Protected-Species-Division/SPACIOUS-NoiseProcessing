@@ -282,7 +282,8 @@ from pathlib import Path
 from noiseProcessGoogleCloud import (print_h5_tree, plot_milidecade_statistics, 
                                      plot_ltsa, plot_third_octave_bands,
                                      list_hdf5_deployments, summarize_hdf5_file,
-                                     plot_third_octave_bands)
+                                     plot_third_octave_bands,
+                                     export_metric_csv)
 import os
 import matplotlib.pyplot as plt
 
@@ -302,7 +303,7 @@ summarize_hdf5_file(h5_path, group_name='GliderRodeo')
 # I only need the deployment names (because I forget)
 list_hdf5_deployments(h5_path)
 
-#%% Available Plots 
+#%% Available Plotting Options
 
 # Plots are available for one dataset (i.e. deployment at a time) so you
 # should know the deployment id or use list_hdf5_deployments to recover them
@@ -342,7 +343,8 @@ fig = plot_ltsa(hdf_file['GliderRodeo'],
 plt.close(fig)
 
 
-plot_third_octave_bands
+# You can also just tell it to make a plot
+plot_third_octave_bands(hdf_file['GliderRodeo'])
 
 
 
@@ -350,13 +352,18 @@ plot_third_octave_bands
 
 # # Heck with python, I want these data in a CSV
 
-# # With the included plotting function, make a plot
-# for proj in projectNames:
-#     with h5py.File(h5_path, 'r') as hdf_file:
-#         Project = hdf_file[proj]
-#         #plot_milidecade_statistics(Project, title=proj) # This takes a while
-#         #plot_third_octave_bands(hdf_file[proj])
-#         export_metric_csv(h5_path, metric = 'broadband', group_name = proj, output_csv= proj+'broadband.csv' )
+projectNames = list_hdf5_deployments(h5_path)
+
+# With the included plotting function, make a plot
+for proj in projectNames:
+    with h5py.File(h5_path, 'r') as hdf_file:
+        Project = hdf_file[proj]
+        #plot_milidecade_statistics(Project, title=proj) # This takes a while
+        #plot_third_octave_bands(hdf_file[proj])
+        export_metric_csv(h5_path, 
+                          metric = 'broadband', 
+                          group_name = proj, 
+                          utput_csv= proj+'broadband.csv' )
 
 
 
