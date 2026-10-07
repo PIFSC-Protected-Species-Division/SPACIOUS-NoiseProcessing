@@ -2287,7 +2287,7 @@ def plot_ltsa(instrument_group_or_list,
 
 
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Union, Literal
+from typing import Dict, Iterable, List, Optional, Tuple, Union, Literal
 
 
 BandType = Literal["third_octave", "decade"]
@@ -2502,9 +2502,18 @@ def export_metric_csv(
     metric: MetricType,
     output_csv: Union[str, Path],
     group_name: Optional[Union[str, Iterable[str]]] = None,
+    start_datetime: Optional[Union[str, datetime, pd.Timestamp]] = None,
+    end_datetime: Optional[Union[str, datetime, pd.Timestamp]] = None,
+    freq_range: Optional[Tuple[Optional[float], Optional[float]]] = None,
 ) -> str:
     """
     Export one metric from one or more NoiseApp HDF5 files to a long-form CSV.
+
+    start_datetime / end_datetime : optional, inclusive time window (anything
+        pandas.to_datetime accepts). Either may be None for an open-ended window.
+    freq_range : optional (low_hz, high_hz), inclusive. Keeps only frequency bands
+        whose center frequency lies in the range (either value may be None).
+        Ignored for metrics without frequency bands (broadband, latitude, longitude).
 
     Output columns always include:
       - datetime
@@ -2535,6 +2544,17 @@ def export_metric_csv(
     paths = _normalize_h5_inputs(h5_path_or_paths)
     if not paths:
         raise ValueError("No HDF5 files found/provided.")
+
+    start_ts = pd.to_datetime(start_datetime) if start_datetime is not None else None
+    end_ts = pd.to_datetime(end_datetime) if end_datetime is not None else None
+    if start_ts is not None and end_ts is not None and start_ts > end_ts:
+        raise ValueError("start_datetime must be <= end_datetime.")
+
+    f_lo = f_hi = None
+    if freq_range is not None:
+        f_lo, f_hi = freq_range
+        if f_lo is not None and f_hi is not None and f_lo > f_hi:
+            raise ValueError("freq_range must be (low_hz, high_hz) with low <= high.")
 
     frames = []
     for p in paths:
@@ -2571,6 +2591,17 @@ def export_metric_csv(
                         f"{p} [{resolved_group_name}]: {data_key} rows {X.shape[0]} != valid DateTime {len(times)}"
                     )
 
+                # Restrict to requested time window (inclusive)
+                time_mask = np.ones(len(times), dtype=bool)
+                if start_ts is not None:
+                    time_mask &= np.asarray(times >= start_ts)
+                if end_ts is not None:
+                    time_mask &= np.asarray(times <= end_ts)
+                if not time_mask.any():
+                    continue
+                times = times[time_mask]
+                X = X[time_mask, :]
+
                 source_file = str(Path(p).name)
                 n_time, n_freq = X.shape
 
@@ -2599,6 +2630,18 @@ def export_metric_csv(
                         raise ValueError(
                             f"{p} [{resolved_group_name}]: frequency bins {len(col_names)} != {data_key} columns {n_freq}"
                         )
+
+                    if f_lo is not None or f_hi is not None:
+                        centers = farr[:, 1] if (farr.ndim == 2 and farr.shape[1] == 3) else farr.reshape(-1)
+                        fmask = np.ones(len(centers), dtype=bool)
+                        if f_lo is not None:
+                            fmask &= centers >= f_lo
+                        if f_hi is not None:
+                            fmask &= centers <= f_hi
+                        if not fmask.any():
+                            continue
+                        X = X[:, fmask]
+                        col_names = [c for c, keep in zip(col_names, fmask) if keep]
 
                     base = pd.DataFrame(X, columns=col_names)
                     base.insert(0, "metric", metric_key)

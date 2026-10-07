@@ -106,3 +106,19 @@ hdf_file[projectName[0]]['decadeFreqHz'][0:9] # Lower frequency range
 hdf_file[projectName[0]]['hybridMiliDecLevels'][0:10] # Values
 hdf_file[projectName[0]]['hybridDecFreqHz'][0:10] # Lower frequency range
 
+
+
+#%% Export a metric to CSV for a time window and frequency range
+
+from noiseProcessGoogleCloud import export_metric_csv
+
+# Hybrid millidecade levels for 1-2 Oct 2024, keeping bands with center
+# frequencies from 100 to 2000 Hz (inclusive). Either bound can be None.
+csv_path = export_metric_csv(
+    h5_path,
+    metric='hybrid',
+    output_csv=r'C:\Users\pam_user\Documents\hybrid_100_2000Hz.csv',
+    start_datetime='2024-10-01 00:00:00',
+    end_datetime='2024-10-02 12:00:00',
+    freq_range=(100, 2000),
+)
