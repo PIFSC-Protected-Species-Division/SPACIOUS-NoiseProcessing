@@ -39,6 +39,10 @@ module are picked up automatically the next time this GUI is launched.
 # terminal from the directory containing this script (PySide6 is excluded so
 # PyInstaller doesn't bundle a second, conflicting Qt runtime alongside PyQt5's):
 # (PropagationPython3_12_11) C:\Users\kaity>pyinstaller --onefile -w --exclude PySide6 C:\Users\kaity\Documents\GitHub\SPACIOUS-NoiseProcessing\NoiseProcessing\YAWN_GUI.py
+# Because i'm an idiot here is the full line on how to compile
+# Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; & "C:\Users\kaity\anaconda3\Scripts\conda.exe" shell.powershell hook | Out-String | Invoke-Expression; conda activate PropagationPython3_12_11; pyinstaller --onefile -w --exclude PySide6 --add-data "C:\Users\kaity\Documents\GitHub\SPACIOUS-NoiseProcessing\NoiseProcessing\ExampleApplications\Figures;ExampleApplications/Figures" --distpath C:\Users\kaity\Documents\GitHub\SPACIOUS-NoiseProcessing\NoiseProcessing --workpath C:\Users\kaity\Documents\GitHub\SPACIOUS-NoiseProcessing\NoiseProcessing\build C:\Users\kaity\Documents\GitHub\SPACIOUS-NoiseProcessing\NoiseProcessing\YAWN_GUI.py
+
+ C:\Users\kaity>pyinstaller --onefile -w --exclude PySide6 C:\Users\kaity\Documents\GitHub\SPACIOUS-NoiseProcessing\NoiseProcessing\YAWN_GUI.py
 """
 
 import contextlib
@@ -48,6 +52,7 @@ import sys
 import tempfile
 import traceback
 from pathlib import Path
+import noiseProcessGoogleCloud
 
 # ---------------------------------------------------------------------------
 # Import NoiseApp / plotting / export helpers from noiseProcessGoogleCloud.py
@@ -90,7 +95,7 @@ matplotlib.use("Qt5Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg  # noqa: E402
 
-from PyQt5 import QtCore, QtWidgets  # noqa: E402
+from PyQt5 import QtCore, QtGui, QtWidgets  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -537,6 +542,19 @@ class NoiseProcessingTab(QtWidgets.QWidget):
 class PlottingTab(QtWidgets.QWidget):
     PLOT_TYPES = ["Milidecade statistics", "Third-octave bands", "LTSA"]
     METRICS = ["hybrid", "third_octave", "decade", "broadband", "latitude", "longitude", "all"]
+    EXAMPLE_FIGURES = {
+        "Milidecade statistics": "DS03_milidecade_SPD.png",
+        "Third-octave bands": "DS03_third_octave.png",
+        "LTSA": "DS03_5min_ltsa.png",
+    }
+    EXAMPLE_FIGURES_DIR = os.path.join(_THIS_DIR, "ExampleApplications", "Figures")
+    AVERAGING_UNITS = {
+        "seconds": "s",
+        "minutes": "min",
+        "hours": "H",
+        "days": "D",
+        "months": "MS",
+    }
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -584,6 +602,7 @@ class PlottingTab(QtWidgets.QWidget):
 
         self.plot_type_combo = QtWidgets.QComboBox()
         self.plot_type_combo.addItems(self.PLOT_TYPES)
+        self.plot_type_combo.currentTextChanged.connect(self._update_example_figure)
         plot_form.addRow("Plot type:", self.plot_type_combo)
 
         self.pbands_edit = QtWidgets.QLineEdit("5,25,50,75,95")
@@ -593,8 +612,16 @@ class PlottingTab(QtWidgets.QWidget):
         self.title_edit.setPlaceholderText("optional")
         plot_form.addRow("Title:", self.title_edit)
 
-        self.averaging_period_edit = QtWidgets.QLineEdit("5min")
-        plot_form.addRow("LTSA averaging period:", self.averaging_period_edit)
+        self.averaging_period_spin = QtWidgets.QSpinBox()
+        self.averaging_period_spin.setRange(1, 999)
+        self.averaging_period_spin.setValue(5)
+        self.averaging_period_unit_combo = QtWidgets.QComboBox()
+        self.averaging_period_unit_combo.addItems(self.AVERAGING_UNITS.keys())
+        self.averaging_period_unit_combo.setCurrentText("minutes")
+        averaging_period_row = QtWidgets.QHBoxLayout()
+        averaging_period_row.addWidget(self.averaging_period_spin)
+        averaging_period_row.addWidget(self.averaging_period_unit_combo)
+        plot_form.addRow("LTSA averaging period:", averaging_period_row)
 
         self.freq_scaled_check = QtWidgets.QCheckBox("Use real frequency axis (LTSA)")
         self.freq_scaled_check.setChecked(True)
@@ -653,15 +680,61 @@ class PlottingTab(QtWidgets.QWidget):
         controls_scroll = QtWidgets.QScrollArea()
         controls_scroll.setWidgetResizable(True)
         controls_scroll.setWidget(controls_widget)
-        controls_scroll.setMinimumWidth(420)
+        controls_scroll.setMinimumWidth(480)
 
         self._current_fig = None
         self.canvas = FigureCanvasQTAgg(plt.figure(figsize=(8, 6)))
 
+        # --- Example figure panel (shown based on selected plot type) ---
+        example_box = QtWidgets.QGroupBox("Example figure")
+        example_layout = QtWidgets.QVBoxLayout(example_box)
+        self.example_image_label = QtWidgets.QLabel("No example available")
+        self.example_image_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.example_image_label.setMinimumSize(300, 200)
+        self.example_image_label.setScaledContents(False)
+        example_layout.addWidget(self.example_image_label)
+        example_box.setMinimumWidth(340)
+
+        canvas_example_splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        canvas_example_splitter.addWidget(self.canvas)
+        canvas_example_splitter.addWidget(example_box)
+        canvas_example_splitter.setSizes([700, 500])
+
         root.addWidget(controls_scroll)
-        root.addWidget(self.canvas, stretch=1)
+        root.addWidget(canvas_example_splitter, stretch=1)
+
+        self._update_example_figure(self.plot_type_combo.currentText())
 
     # -- Helpers --
+    def _averaging_period_str(self):
+        unit = self.AVERAGING_UNITS[self.averaging_period_unit_combo.currentText()]
+        return f"{self.averaging_period_spin.value()}{unit}"
+
+    def _update_example_figure(self, plot_type):
+        filename = self.EXAMPLE_FIGURES.get(plot_type)
+        path = os.path.join(self.EXAMPLE_FIGURES_DIR, filename) if filename else None
+        pixmap = QtGui.QPixmap(path) if path and os.path.isfile(path) else None
+        if pixmap and not pixmap.isNull():
+            self._example_pixmap = pixmap
+            self._rescale_example_image()
+        else:
+            self._example_pixmap = None
+            self.example_image_label.setText("No example available")
+
+    def _rescale_example_image(self):
+        if self._example_pixmap is None:
+            return
+        scaled = self._example_pixmap.scaled(
+            self.example_image_label.size(),
+            QtCore.Qt.KeepAspectRatio,
+            QtCore.Qt.SmoothTransformation,
+        )
+        self.example_image_label.setPixmap(scaled)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._rescale_example_image()
+
     def _selected_h5_paths(self):
         return _list_h5_paths(self.h5_input_edit.text().strip())
 
@@ -744,7 +817,7 @@ class PlottingTab(QtWidgets.QWidget):
                     else:  # LTSA
                         fig = plot_ltsa(
                             groups,
-                            averaging_period=self.averaging_period_edit.text().strip() or "5min",
+                            averaging_period=self._averaging_period_str(),
                             title=title,
                             freq_scaled=self.freq_scaled_check.isChecked(),
                             log_freq=self.log_freq_check.isChecked(),
@@ -828,7 +901,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("YAWN - Yet Another Wave/Noise processor")
-        self.resize(1200, 800)
+        self.resize(1600, 950)
 
         tabs = QtWidgets.QTabWidget()
         tabs.addTab(NoiseProcessingTab(), "Noise Processing")
