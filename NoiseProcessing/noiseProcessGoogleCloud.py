@@ -2536,6 +2536,9 @@ def export_metric_csv(
         per file/deployment (dB values averaged in linear space; latitude/longitude
         averaged directly). datetime is the window midpoint and n_bins is added.
 
+    If a file/deployment has no data inside the window, one row with NA values is
+    written (datetime = window midpoint, n_bins = 0 when average_time is set).
+
     Output columns always include:
       - datetime
       - source_file
@@ -2630,8 +2633,6 @@ def export_metric_csv(
                     time_mask &= np.asarray(times >= start_ts)
                 if end_ts is not None:
                     time_mask &= np.asarray(times <= end_ts)
-                if not time_mask.any():
-                    continue
                 times = times[time_mask]
                 X = X[time_mask, :]
 
@@ -2698,7 +2699,25 @@ def export_metric_csv(
                     base.insert(0, "source_file", source_file)
                     base.insert(0, "datetime", times.astype(str).to_numpy())
 
-                if average_time:
+                if len(times) == 0:
+                    # No data in the window: emit one NA row so the event is still recorded.
+                    id_cols = ["datetime", "source_file", "deployment", "metric"]
+                    data_cols = [c for c in base.columns if c not in id_cols]
+                    if start_ts is not None and end_ts is not None:
+                        na_time = start_ts + (end_ts - start_ts) / 2
+                    else:
+                        na_time = start_ts if start_ts is not None else end_ts
+                    row = {
+                        "datetime": str(na_time),
+                        "source_file": source_file,
+                        "deployment": str(resolved_group_name),
+                        "metric": metric_key,
+                    }
+                    if average_time:
+                        row["n_bins"] = 0
+                    row.update({c: np.nan for c in data_cols})
+                    base = pd.DataFrame([row])
+                elif average_time:
                     # One row per source/group: dB metrics are averaged in linear space,
                     # latitude/longitude arithmetically. datetime is the window midpoint.
                     id_cols = ["datetime", "source_file", "deployment", "metric"]
@@ -2749,12 +2768,16 @@ def export_metric_csv(
     if append and out_path.exists() and out_path.stat().st_size > 0:
         existing_cols = list(pd.read_csv(out_path, nrows=0).columns)
         if existing_cols != list(out_df.columns):
+            new_cols = list(out_df.columns)
             raise ValueError(
-                f"Cannot append: columns differ from existing file {out_path}."
+                f"Cannot append: columns differ from existing file {out_path}.\n"
+                f"  only in file: {[c for c in existing_cols if c not in new_cols]}\n"
+                f"  only in new rows: {[c for c in new_cols if c not in existing_cols]}\n"
+                f"  (same names but different order: {set(existing_cols) == set(new_cols)})"
             )
-        out_df.to_csv(out_path, mode="a", header=False, index=False)
+        out_df.to_csv(out_path, mode="a", header=False, index=False, na_rep="NA")
     else:
-        out_df.to_csv(out_path, index=False)
+        out_df.to_csv(out_path, index=False, na_rep="NA")
     return str(out_path)
 
 
