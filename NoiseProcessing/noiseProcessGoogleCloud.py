@@ -2569,6 +2569,7 @@ def export_metric_csv(
             raise ValueError("freq_range must be (low_hz, high_hz) with low <= high.")
 
     frames = []
+    data_t_min = data_t_max = None
     for p in paths:
         with h5py.File(p, "r") as h5:
             required = ["DateTime", data_key]
@@ -2602,6 +2603,11 @@ def export_metric_csv(
                     raise ValueError(
                         f"{p} [{resolved_group_name}]: {data_key} rows {X.shape[0]} != valid DateTime {len(times)}"
                     )
+
+                if len(times):
+                    t_lo, t_hi = times.min(), times.max()
+                    data_t_min = t_lo if data_t_min is None else min(data_t_min, t_lo)
+                    data_t_max = t_hi if data_t_max is None else max(data_t_max, t_hi)
 
                 # Restrict to requested time window (inclusive)
                 time_mask = np.ones(len(times), dtype=bool)
@@ -2665,7 +2671,7 @@ def export_metric_csv(
                             mean_db[den == 0] = np.nan
                             lo_lbl = f_lo if f_lo is not None else centers[fmask].min()
                             hi_lbl = f_hi if f_hi is not None else centers[fmask].max()
-                            X = mean_db.reshape(-1, 1)
+                            X = np.round(mean_db.reshape(-1, 1),1)
                             col_names = [f"mean_{lo_lbl:g}-{hi_lbl:g}_Hz"]
                         else:
                             X = X[:, fmask]
@@ -2678,6 +2684,20 @@ def export_metric_csv(
                     base.insert(0, "datetime", times.astype(str).to_numpy())
 
                 frames.append(base)
+
+    if data_t_min is not None and (start_ts is not None or end_ts is not None):
+        span = f"{data_t_min} to {data_t_max}"
+        if not frames:
+            raise ValueError(
+                f"No data rows found in requested window {start_ts} to {end_ts}; "
+                f"data covers {span}."
+            )
+        if (start_ts is not None and start_ts < data_t_min) or (
+                end_ts is not None and end_ts > data_t_max):
+            import warnings
+            warnings.warn(
+                f"Requested window {start_ts} to {end_ts} extends beyond data coverage {span}."
+            )
 
     if not frames:
         raise ValueError("No data rows found to export.")
