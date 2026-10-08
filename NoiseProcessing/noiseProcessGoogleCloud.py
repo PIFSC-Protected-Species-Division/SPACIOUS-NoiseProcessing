@@ -2498,7 +2498,7 @@ def _normalize_h5_inputs(
 
 
 def export_metric_csv(
-    h5_path_or_paths: Union[str, Path, Iterable[Union[str, Path]]],
+    h5_path_or_paths: Union[str, Path, Iterable[Union[str, Path]], h5py.Group],
     metric: MetricType,
     output_csv: Union[str, Path],
     group_name: Optional[Union[str, Iterable[str]]] = None,
@@ -2510,6 +2510,10 @@ def export_metric_csv(
 ) -> str:
     """
     Export one metric from one or more NoiseApp HDF5 files to a long-form CSV.
+
+    h5_path_or_paths : file path(s)/folder, or an open h5py.Group (e.g.
+        hdf_file["SG680"]) to export just that deployment. An open h5py.File
+        exports its groups (or those named by group_name).
 
     start_datetime / end_datetime : optional, inclusive time window (anything
         pandas.to_datetime accepts). Either may be None for an open-ended window.
@@ -2553,6 +2557,12 @@ def export_metric_csv(
         raise ValueError(f"Unsupported metric '{metric}'. Choose one of {sorted(metric_map.keys())}.")
 
     data_key, freq_key = metric_map[metric_key]
+    if isinstance(h5_path_or_paths, h5py.Group):
+        # Reopen by filename (read-only) so the existing per-file loop can be reused.
+        src = h5_path_or_paths
+        if not isinstance(src, h5py.File):
+            group_name = src.name.strip("/")
+        h5_path_or_paths = src.file.filename
     paths = _normalize_h5_inputs(h5_path_or_paths)
     if not paths:
         raise ValueError("No HDF5 files found/provided.")
