@@ -2505,6 +2505,8 @@ def export_metric_csv(
     start_datetime: Optional[Union[str, datetime, pd.Timestamp]] = None,
     end_datetime: Optional[Union[str, datetime, pd.Timestamp]] = None,
     freq_range: Optional[Tuple[Optional[float], Optional[float]]] = None,
+    append: bool = False,
+    extra_columns: Optional[Dict[str, object]] = None,
 ) -> str:
     """
     Export one metric from one or more NoiseApp HDF5 files to a long-form CSV.
@@ -2514,6 +2516,13 @@ def export_metric_csv(
     freq_range : optional (low_hz, high_hz), inclusive. Keeps only frequency bands
         whose center frequency lies in the range (either value may be None).
         Ignored for metrics without frequency bands (broadband, latitude, longitude).
+    append : if True and output_csv already exists, add rows to it without a
+        second header (columns must match the existing header). Otherwise the
+        file is overwritten.
+    extra_columns : optional {column_name: value} added to every exported row
+        (e.g. event ID, species). A name matching an existing column (such as
+        "deployment") replaces its values. Use with append=True to tag each
+        call's rows without rewriting the file.
 
     Output columns always include:
       - datetime
@@ -2655,9 +2664,21 @@ def export_metric_csv(
         raise ValueError("No data rows found to export.")
 
     out_df = pd.concat(frames, axis=0, ignore_index=True)
+    if extra_columns:
+        for col_name, col_value in extra_columns.items():
+            out_df[col_name] = col_value
     out_path = Path(output_csv)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_df.to_csv(out_path, index=False)
+
+    if append and out_path.exists() and out_path.stat().st_size > 0:
+        existing_cols = list(pd.read_csv(out_path, nrows=0).columns)
+        if existing_cols != list(out_df.columns):
+            raise ValueError(
+                f"Cannot append: columns differ from existing file {out_path}."
+            )
+        out_df.to_csv(out_path, mode="a", header=False, index=False)
+    else:
+        out_df.to_csv(out_path, index=False)
     return str(out_path)
 
 
