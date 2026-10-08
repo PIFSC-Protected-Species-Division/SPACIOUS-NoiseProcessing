@@ -11,6 +11,7 @@ import glob
 import math
 import shutil
 import tempfile
+import warnings
 import time as time_module
 from contextlib import ExitStack
 from urllib.parse import urlparse
@@ -2507,6 +2508,7 @@ def export_metric_csv(
     freq_range: Optional[Tuple[Optional[float], Optional[float]]] = None,
     append: bool = False,
     extra_columns: Optional[Dict[str, object]] = None,
+    average_time: bool = False,
 ) -> str:
     """
     Export one metric from one or more NoiseApp HDF5 files to a long-form CSV.
@@ -2530,6 +2532,9 @@ def export_metric_csv(
         (e.g. event ID, species). A name matching an existing column (such as
         "deployment") replaces its values. Use with append=True to tag each
         call's rows without rewriting the file.
+    average_time : if True, collapse all time bins inside the window into one row
+        per file/deployment (dB values averaged in linear space; latitude/longitude
+        averaged directly). datetime is the window midpoint and n_bins is added.
 
     Output columns always include:
       - datetime
@@ -2693,6 +2698,29 @@ def export_metric_csv(
                     base.insert(0, "source_file", source_file)
                     base.insert(0, "datetime", times.astype(str).to_numpy())
 
+                if average_time:
+                    # One row per source/group: dB metrics are averaged in linear space,
+                    # latitude/longitude arithmetically. datetime is the window midpoint.
+                    id_cols = ["datetime", "source_file", "deployment", "metric"]
+                    data_cols = [c for c in base.columns if c not in id_cols]
+                    vals = base[data_cols].to_numpy(dtype=float)
+                    with np.errstate(all="ignore"), warnings.catch_warnings():
+                        warnings.simplefilter("ignore", RuntimeWarning)
+                        if metric_key in ("latitude", "longitude"):
+                            avg = np.nanmean(vals, axis=0)
+                        else:
+                            avg = np.round(10.0 * np.log10(np.nanmean(10.0 ** (vals / 10.0), axis=0)), 1)
+                    mid = times.min() + (times.max() - times.min()) / 2
+                    row = {
+                        "datetime": str(mid),
+                        "source_file": source_file,
+                        "deployment": str(resolved_group_name),
+                        "metric": metric_key,
+                        "n_bins": len(times),
+                    }
+                    row.update(dict(zip(data_cols, avg)))
+                    base = pd.DataFrame([row])
+
                 frames.append(base)
 
     if data_t_min is not None and (start_ts is not None or end_ts is not None):
@@ -2704,7 +2732,6 @@ def export_metric_csv(
             )
         if (start_ts is not None and start_ts < data_t_min) or (
                 end_ts is not None and end_ts > data_t_max):
-            import warnings
             warnings.warn(
                 f"Requested window {start_ts} to {end_ts} extends beyond data coverage {span}."
             )
