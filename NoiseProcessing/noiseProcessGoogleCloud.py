@@ -2515,6 +2515,9 @@ def export_metric_csv(
         pandas.to_datetime accepts). Either may be None for an open-ended window.
     freq_range : optional (low_hz, high_hz), inclusive. Keeps only frequency bands
         whose center frequency lies in the range (either value may be None).
+        For the hybrid metric the selected bands are collapsed into one column,
+        "mean_<low>-<high>_Hz": a bandwidth-weighted mean of the linear PSD,
+        converted back to dB re 1 uPa^2/Hz. Other band metrics are just filtered.
         Ignored for metrics without frequency bands (broadband, latitude, longitude).
     append : if True and output_csv already exists, add rows to it without a
         second header (columns must match the existing header). Otherwise the
@@ -2649,8 +2652,24 @@ def export_metric_csv(
                             fmask &= centers <= f_hi
                         if not fmask.any():
                             continue
-                        X = X[:, fmask]
-                        col_names = [c for c, keep in zip(col_names, fmask) if keep]
+                        if farr.ndim == 2 and farr.shape[1] == 3:
+                            # Hybrid bands have unequal widths: average PSD in linear space,
+                            # weighted by bandwidth, then convert back to dB.
+                            bw = (farr[:, 2] - farr[:, 0])[fmask]
+                            lin = 10.0 ** (X[:, fmask] / 10.0)
+                            valid = ~np.isnan(lin)
+                            num = np.nansum(lin * bw[None, :], axis=1)
+                            den = (valid * bw[None, :]).sum(axis=1)
+                            with np.errstate(divide="ignore", invalid="ignore"):
+                                mean_db = 10.0 * np.log10(num / den)
+                            mean_db[den == 0] = np.nan
+                            lo_lbl = f_lo if f_lo is not None else centers[fmask].min()
+                            hi_lbl = f_hi if f_hi is not None else centers[fmask].max()
+                            X = mean_db.reshape(-1, 1)
+                            col_names = [f"mean_{lo_lbl:g}-{hi_lbl:g}_Hz"]
+                        else:
+                            X = X[:, fmask]
+                            col_names = [c for c, keep in zip(col_names, fmask) if keep]
 
                     base = pd.DataFrame(X, columns=col_names)
                     base.insert(0, "metric", metric_key)
